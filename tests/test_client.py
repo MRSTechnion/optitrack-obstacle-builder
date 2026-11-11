@@ -17,7 +17,11 @@ from obstacle_builder.natnet import client as client_mod
 from obstacle_builder.natnet.NatNetClient import NatNetClient
 from obstacle_builder.natnet.types import Frame
 
-HOOKED = ["_NatNetClient__unpack_mocap_data", "_NatNetClient__unpack_data_descriptions"]
+HOOKED = [
+    "_NatNetClient__unpack_mocap_data",
+    "_NatNetClient__unpack_data_descriptions",
+    "_NatNetClient__create_data_socket",
+]
 
 
 class _FakeOwner:
@@ -180,3 +184,16 @@ def test_local_ip_for_picks_routing_interface():
 def test_default_client_ip_is_auto():
     conn = client_mod.NatNetConnection(server_ip="192.168.1.10")
     assert conn.client_ip is None  # resolved to a real NIC on connect()
+
+
+def test_multicast_data_socket_binds_to_all_interfaces():
+    """On Linux a socket bound to a unicast IP never sees multicast datagrams."""
+    sdk = client_mod._NatNetSDKInterceptor(_FakeOwner())
+    sdk.use_multicast = True
+    sdk.local_ip_address = "127.0.0.1"
+    sock = sdk._NatNetClient__create_data_socket(0)
+    try:
+        assert sock is not None
+        assert sock.getsockname()[0] == "0.0.0.0"
+    finally:
+        sock.close()

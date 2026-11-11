@@ -484,6 +484,33 @@ class _NatNetSDKInterceptor(_NatNetSDK if _SDK_AVAILABLE else object):
     # `_NatNetSDKInterceptor__unpack_mocap_data` and never be called.
     # tests/test_client.py guards against this regressing.
 
+    # The SDK binds its multicast data socket to (local_ip, port). That works
+    # on Windows, but on Linux/macOS a socket bound to a unicast address never
+    # receives datagrams addressed to a multicast group, so no frames arrive.
+    # Bind to all interfaces instead; the group membership stays on local_ip,
+    # so we still only receive Motive's stream from that interface.
+    def _NatNetClient__create_data_socket(self, port):
+        if not self.use_multicast or sys.platform == "win32":
+            return super()._NatNetClient__create_data_socket(port)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(
+                socket.IPPROTO_IP,
+                socket.IP_ADD_MEMBERSHIP,
+                socket.inet_aton(self.multicast_address)
+                + socket.inet_aton(self.local_ip_address),
+            )
+            sock.bind(("", port))
+        except OSError:
+            logger.exception(
+                f"Could not open NatNet multicast data socket "
+                f"({self.multicast_address}:{port} on {self.local_ip_address})"
+            )
+            sock.close()
+            return None
+        return sock
+
     # The SDK calls this internally after parsing each frame.
     # We override it to intercept the mocap_data object.
     def _NatNetClient__unpack_mocap_data(self, data, packet_size, major, minor):
