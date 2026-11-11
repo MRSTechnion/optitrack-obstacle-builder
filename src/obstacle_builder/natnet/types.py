@@ -110,7 +110,7 @@ class RigidBody:
                 indicator — values above ~0.005 m suggest poor tracking.
     """
     body_id: int
-    naem: str
+    name: str
     position: Vector3
     orientation: Quaternion
     markers: list[Marker] = field(default_factory=list)
