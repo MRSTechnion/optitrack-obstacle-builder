@@ -14,3 +14,9 @@
 *.stl   binary
 *.png   binary
 *.jpg   binary
+# Vendored OptiTrack NatNet SDK - copied from the mocap PC, store byte-for-byte
+# (keeps original CRLF line endings; never normalize or edit these)
+src/obstacle_builder/natnet/NatNetClient.py     -text
+src/obstacle_builder/natnet/PythonSample.py     -text
+src/obstacle_builder/natnet/MoCapData.py        -text
+src/obstacle_builder/natnet/DataDescriptions.py -text
