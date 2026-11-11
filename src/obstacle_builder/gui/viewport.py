@@ -9,8 +9,8 @@ Renders:
   - Camera positions as small dots (optional)
 
 Navigation:
-  - Left-drag   : orbit (rotate around scene centre)
-  - Right-drag  : pan
+  - Left-drag   : pan
+  - Right-drag  : orbit (rotate around scene centre)
   - Scroll wheel: zoom
 
 The widget is intentionally self-contained — it only knows about
@@ -443,12 +443,12 @@ class Viewport3D(QOpenGLWidget):
         dy = event.pos().y() - self._last_mouse.y()
         self._last_mouse = event.pos()
 
-        if self._mouse_btn == Qt.MouseButton.LeftButton:
+        if self._mouse_btn == Qt.MouseButton.RightButton:
             # Orbit
             self._azimuth   += dx * 0.5
             self._elevation  = max(-89.0, min(89.0, self._elevation + dy * 0.5))
 
-        elif self._mouse_btn == Qt.MouseButton.RightButton:
+        elif self._mouse_btn == Qt.MouseButton.LeftButton:
             # Pan — scale by distance so panning feels consistent at any zoom
             pan_scale = self._distance * 0.002
             self._pan_x -= dx * pan_scale
