@@ -197,3 +197,50 @@ def test_multicast_data_socket_binds_to_all_interfaces():
         assert sock.getsockname()[0] == "0.0.0.0"
     finally:
         sock.close()
+
+
+# ---------------------------------------------------------------------------
+# Motive "Up Axis" streaming setting
+# ---------------------------------------------------------------------------
+
+def _zup_conn(axis: str):
+    conn = client_mod.NatNetConnection(server_ip="192.168.1.10", stream_up_axis=axis)
+    conn._id_to_name = {7: "Box_01"}
+    # Z-up stream: box lying on the floor at height 0.16 m, yawed (unit quaternion)
+    conn._rb_poses = {7: ((-0.367, 0.527, 0.16), (0.0, 0.0, 0.6, 0.8), 0.001, True)}
+    conn._labeled_markers = {7: [((-0.69, 0.14, 0.02), 0.0), ((-0.03, 0.85, 0.33), 0.0)]}
+    return conn
+
+
+def test_zup_stream_round_trips_to_motive_values():
+    """Native frame -> convert_frame(z_up) must reproduce Motive's Z-up numbers."""
+    import numpy as np
+
+    from obstacle_builder.geometry.transform import convert_frame
+
+    frame = _zup_conn("z")._build_frame({"frame_number": 1})
+    world = convert_frame(frame, z_up=True).rigid_bodies[0]
+
+    np.testing.assert_allclose(world.position.as_tuple(), (-0.367, 0.527, 0.16), atol=1e-9)
+    np.testing.assert_allclose(
+        [m.position.as_tuple() for m in world.markers],
+        [(-0.69, 0.14, 0.02), (-0.03, 0.85, 0.33)], atol=1e-9,
+    )
+    np.testing.assert_allclose(
+        world.orientation.as_tuple(), (0.0, 0.0, 0.6, 0.8), atol=1e-9
+    )
+
+
+def test_yup_stream_is_passed_through():
+    frame = _zup_conn("y")._build_frame({"frame_number": 1})
+    assert frame.rigid_bodies[0].position.as_tuple() == (-0.367, 0.527, 0.16)
+
+
+def test_invalid_stream_up_axis_rejected():
+    with pytest.raises(ValueError):
+        client_mod.NatNetConnection(stream_up_axis="x")
+
+
+def test_default_stream_up_axis_is_z():
+    """The lab's Motive streams Z-up; the app does not expose this setting."""
+    assert client_mod.NatNetConnection().stream_up_axis == "z"

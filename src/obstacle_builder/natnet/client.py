@@ -27,6 +27,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
+from ..geometry.transform import zup_stream_to_native
 from .types import CameraInfo, Frame, Marker, Quaternion, RigidBody, Vector3
 
 # The NatNet SDK files in this folder (NatNetClient.py, MoCapData.py,
@@ -60,6 +61,13 @@ DEFAULT_SERVER_IP     = "192.168.1.100"
 # group on 127.0.0.1 means no frames are ever received.
 DEFAULT_CLIENT_IP: str | None = None
 DEFAULT_USE_MULTICAST = True
+# Motive: Settings → Streaming → "Up Axis". The lab's Motive is configured
+# with Z-up and this is not meant to be changed. It applies to rigid bodies /
+# markers in frame data only; camera positions in data descriptions are always
+# Y-up. NatNet does not transmit this setting, so it is fixed here. If Motive
+# is ever switched back to its factory default (Y-up), set this to "y" —
+# otherwise obstacles appear rotated 90° relative to the floor.
+DEFAULT_STREAM_UP_AXIS = "z"
 
 # Quality threshold: warn if mean marker error exceeds this (metres)
 _ERROR_THRESHOLD_M = 0.005
@@ -100,11 +108,15 @@ class NatNetConnection:
         server_ip:         str  = DEFAULT_SERVER_IP,
         client_ip:         str | None = DEFAULT_CLIENT_IP,
         use_multicast:     bool = DEFAULT_USE_MULTICAST,
+        stream_up_axis:    str  = DEFAULT_STREAM_UP_AXIS,
         on_frame_received: Callable[[Frame], None] | None = None,
     ) -> None:
         self.server_ip     = server_ip
         self.client_ip     = client_ip
         self.use_multicast = use_multicast
+        if stream_up_axis not in ("y", "z"):
+            raise ValueError(f"stream_up_axis must be 'y' or 'z', got {stream_up_axis!r}")
+        self.stream_up_axis = stream_up_axis
         self._on_frame_cb  = on_frame_received
 
         self._sdk: _NatNetSDK | None = None
@@ -178,7 +190,7 @@ class NatNetConnection:
 
         self._running = True
         logger.info(f"NatNet started — server={self.server_ip}, local={self.client_ip}, "
-                    f"multicast={self.use_multicast}")
+                    f"multicast={self.use_multicast}, stream up axis={self.stream_up_axis.upper()}")
 
         # Wait briefly for server handshake
         if not self._wait_until_connected(timeout=5.0):
@@ -400,7 +412,7 @@ class NatNetConnection:
                         residual  = residual,
                     ))
 
-                rigid_bodies.append(RigidBody(
+                body = RigidBody(
                     body_id        = body_id,
                     name           = name,
                     position       = Vector3(pos[0], pos[1], pos[2]),
@@ -408,7 +420,11 @@ class NatNetConnection:
                     markers        = markers,
                     tracking_valid = valid,
                     mean_error     = error,
-                ))
+                )
+                # Frames are always returned in native Y-up (like the cameras).
+                if self.stream_up_axis == "z":
+                    body = zup_stream_to_native(body)
+                rigid_bodies.append(body)
 
             return Frame(
                 frame_number = meta.get("frame_number", 0),

@@ -234,3 +234,41 @@ def _convert_camera(cam: CameraInfo, z_up: bool) -> CameraInfo:
         position  = convert_position(cam.position, z_up),
         is_corner = cam.is_corner,
     )
+
+# ---------------------------------------------------------------------------
+# Motive "Up Axis = Z" streaming → OptiTrack native (Y-up)
+# ---------------------------------------------------------------------------
+
+def zup_stream_to_native(body: RigidBody) -> RigidBody:
+    """
+    Undo Motive's Z-up streaming conversion for one rigid body.
+
+    Motive's streaming setting "Up Axis = Z Axis" converts rigid-body poses
+    and markers in the frame data to Z-up (same mapping as convert_position),
+    but camera positions in the data descriptions stay Y-up. The NatNet client
+    calls this so every Frame it returns is in native Y-up, as the rest of the
+    pipeline (convert_frame, hulls, boundary) expects.
+
+    Exact inverse of _convert_rigid_body(body, z_up=True).
+    """
+    def pos(v: Vector3) -> Vector3:
+        # inverse of: world = (x, -z, y)  ->  native = (x, z_w, -y_w)
+        return Vector3(v.x, v.z, -v.y)
+
+    q = body.orientation
+    q_native = _R_OPTITRACK_TO_WORLD.inv() * Rotation.from_quat([q.qx, q.qy, q.qz, q.qw])
+    qx, qy, qz, qw = q_native.as_quat()
+
+    return RigidBody(
+        body_id        = body.body_id,
+        name           = body.name,
+        position       = pos(body.position),
+        orientation    = Quaternion(qx, qy, qz, qw),
+        markers        = [
+            Marker(marker_id=m.marker_id, position=pos(m.position),
+                   size=m.size, residual=m.residual)
+            for m in body.markers
+        ],
+        tracking_valid = body.tracking_valid,
+        mean_error     = body.mean_error,
+    )
