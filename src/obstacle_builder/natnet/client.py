@@ -20,17 +20,31 @@ These are found at:
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
+from pathlib import Path
 
 from .types import CameraInfo, Frame, Marker, Quaternion, RigidBody, Vector3
+
+# The NatNet SDK files in this folder (NatNetClient.py, MoCapData.py,
+# DataDescriptions.py, PythonSample.py) are copied unmodified from the OptiTrack
+# PC and must not be edited. NatNetClient.py does top-level
+# `import DataDescriptions` / `import MoCapData`, so this folder has to be on
+# sys.path. It is *appended* (not prepended) so that our own natnet/types.py
+# never shadows the standard-library `types` module.
+_NATNET_DIR = str(Path(__file__).resolve().parent)
+if _NATNET_DIR not in sys.path:
+    sys.path.append(_NATNET_DIR)
 
 try:
     from .NatNetClient import NatNetClient as _NatNetSDK
     _SDK_AVAILABLE = True
-except ImportError:
+    _SDK_IMPORT_ERROR: ImportError | None = None
+except ImportError as _e:
     _SDK_AVAILABLE = False
+    _SDK_IMPORT_ERROR = _e
 
 logger = logging.getLogger(__name__)
 
@@ -80,14 +94,14 @@ class NatNetConnection:
         server_ip:         str  = DEFAULT_SERVER_IP,
         client_ip:         str  = DEFAULT_CLIENT_IP,
         use_multicast:     bool = DEFAULT_USE_MULTICAST,
-        on_frame_received: Optional[Callable[[Frame], None]] = None,
+        on_frame_received: Callable[[Frame], None] | None = None,
     ) -> None:
         self.server_ip     = server_ip
         self.client_ip     = client_ip
         self.use_multicast = use_multicast
         self._on_frame_cb  = on_frame_received
 
-        self._sdk: Optional[_NatNetSDK] = None
+        self._sdk: _NatNetSDK | None = None
         self._running = False
 
         # Populated by _on_rigid_body — latest pose per body id
@@ -116,7 +130,7 @@ class NatNetConnection:
         self._capture_lock   = threading.Lock()
         self._capturing      = False
 
-        self._latest_frame: Optional[Frame] = None
+        self._latest_frame: Frame | None = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -131,8 +145,9 @@ class NatNetConnection:
         """
         if not _SDK_AVAILABLE:
             logger.error(
-                "NatNetClient.py not found in src/obstacle_builder/natnet/. "
-                "Copy it from the OptiTrack PC."
+                f"Could not import the NatNet SDK ({_SDK_IMPORT_ERROR}). "
+                "Make sure NatNetClient.py, DataDescriptions.py and MoCapData.py "
+                "from the OptiTrack SDK are in src/obstacle_builder/natnet/."
             )
             return False
 
@@ -198,7 +213,7 @@ class NatNetConnection:
     def is_connected(self) -> bool:
         return self._running and (self._sdk is not None) and self._sdk.connected()
 
-    def capture_frame(self, num_frames: int = _CAPTURE_N_FRAMES) -> Optional[Frame]:
+    def capture_frame(self, num_frames: int = _CAPTURE_N_FRAMES) -> Frame | None:
         """
         Collect num_frames consecutive frames and return the best one
         (lowest combined mean marker error across all rigid bodies).
@@ -243,11 +258,11 @@ class NatNetConnection:
         return best
 
     @property
-    def latest_frame(self) -> Optional[Frame]:
+    def latest_frame(self) -> Frame | None:
         """Most recently received frame. Updated continuously."""
         return self._latest_frame
 
-    def set_live_callback(self, cb: Optional[Callable[[Frame], None]]) -> None:
+    def set_live_callback(self, cb: Callable[[Frame], None] | None) -> None:
         self._on_frame_cb = cb
 
     # ------------------------------------------------------------------
@@ -355,7 +370,7 @@ class NatNetConnection:
     # Frame assembly
     # ------------------------------------------------------------------
 
-    def _build_frame(self, meta: dict) -> Optional[Frame]:
+    def _build_frame(self, meta: dict) -> Frame | None:
         """Assemble a Frame dataclass from the latest cached SDK state."""
         try:
             with self._rb_lock:
@@ -452,23 +467,36 @@ class _NatNetSDKInterceptor(_NatNetSDK if _SDK_AVAILABLE else object):
             super().__init__()
         self._owner = owner
 
+    # NOTE on naming: the SDK defines these as private double-underscore
+    # methods, which Python name-mangles to `_NatNetClient__<name>`. The SDK
+    # calls them via `self.__unpack_...`, i.e. `self._NatNetClient__unpack_...`.
+    # To override them we must use the mangled name explicitly — a plain
+    # `def __unpack_mocap_data` here would become
+    # `_NatNetSDKInterceptor__unpack_mocap_data` and never be called.
+    # tests/test_client.py guards against this regressing.
+
     # The SDK calls this internally after parsing each frame.
     # We override it to intercept the mocap_data object.
-    def __unpack_mocap_data(self, data, packet_size, major, minor):
-        offset, mocap_data = super().__unpack_mocap_data(data, packet_size, major, minor)
+    def _NatNetClient__unpack_mocap_data(self, data, packet_size, major, minor):
+        offset, mocap_data = super()._NatNetClient__unpack_mocap_data(
+            data, packet_size, major, minor
+        )
+        # Never let our handler crash the SDK's receive thread, but do report it.
         try:
             self._owner._on_mocap_data(mocap_data)
         except Exception:
-            pass
+            logger.exception("Error handling NatNet mocap frame")
         return offset, mocap_data
 
     # The SDK calls this after parsing DataDescriptions.
-    def __unpack_data_descriptions(self, data, packet_size, major, minor):
-        offset, data_descs = super().__unpack_data_descriptions(data, packet_size, major, minor)
+    def _NatNetClient__unpack_data_descriptions(self, data, packet_size, major, minor):
+        offset, data_descs = super()._NatNetClient__unpack_data_descriptions(
+            data, packet_size, major, minor
+        )
         try:
             self._owner._on_data_descriptions(data_descs)
         except Exception:
-            pass
+            logger.exception("Error handling NatNet data descriptions")
         return offset, data_descs
 
 
@@ -494,7 +522,7 @@ class MockNatNetConnection:
         with open(Path(fixture_path)) as f:
             self._data = json.load(f)
         self._connected = False
-        self._frame: Optional[Frame] = None
+        self._frame: Frame | None = None
 
     def connect(self) -> bool:
         self._frame = self._build_frame()
@@ -509,11 +537,11 @@ class MockNatNetConnection:
     def is_connected(self) -> bool:
         return self._connected
 
-    def capture_frame(self, num_frames: int = 1) -> Optional[Frame]:
+    def capture_frame(self, num_frames: int = 1) -> Frame | None:
         return self._frame
 
     @property
-    def latest_frame(self) -> Optional[Frame]:
+    def latest_frame(self) -> Frame | None:
         return self._frame
 
     def set_live_callback(self, cb) -> None:

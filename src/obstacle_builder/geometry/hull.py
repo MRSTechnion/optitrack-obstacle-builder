@@ -20,11 +20,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
-from scipy.spatial import ConvexHull
-from stl import mesh as stl_mesh   # numpy-stl
+from scipy.spatial import ConvexHull, QhullError
+from stl import mesh as stl_mesh  # numpy-stl
 
 from ..natnet.types import CameraInfo, RigidBody
 from .transform import markers_to_local_frame
@@ -107,7 +106,7 @@ class BoundaryResult:
 # Rigid body → convex hull
 # ---------------------------------------------------------------------------
 
-def build_hull(body: RigidBody) -> Optional[HullResult]:
+def build_hull(body: RigidBody) -> HullResult | None:
     """
     Reconstruct the convex hull geometry for one rigid body from its
     marker positions.
@@ -153,7 +152,7 @@ def build_hull(body: RigidBody) -> Optional[HullResult]:
     # Compute convex hull
     try:
         hull = ConvexHull(local_pts)
-    except Exception as e:
+    except QhullError as e:
         logger.warning(f"'{body.name}': ConvexHull failed — {e}. "
                        "Markers may be coplanar or too close together.")
         return None
@@ -209,9 +208,9 @@ def build_all_hulls(bodies: list[RigidBody]) -> dict[str, HullResult]:
 
 def build_boundary(
     cameras:         list[CameraInfo],
-    wall_height_m:   Optional[float] = None,
+    wall_height_m:   float | None = None,
     wall_extrude_in: bool = False,
-) -> Optional[BoundaryResult]:
+) -> BoundaryResult | None:
     """
     Build the room boundary from camera positions.
 
@@ -475,11 +474,11 @@ def _four_largest_hull_cameras(
         # Area of quadrilateral via convex hull
         try:
             h = ConvexHull(pts)
-            if h.volume > best_area:   # ConvexHull.volume = area in 2D
-                best_area  = h.volume
-                best_combo = list(combo)
-        except Exception:
-            continue
+        except QhullError:
+            continue  # degenerate quad (collinear/duplicate cameras) - skip it
+        if h.volume > best_area:   # ConvexHull.volume = area in 2D
+            best_area  = h.volume
+            best_combo = list(combo)
 
     return best_combo
 

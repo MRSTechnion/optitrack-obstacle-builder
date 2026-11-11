@@ -15,20 +15,19 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from obstacle_builder.natnet.client import MockNatNetConnection
-from obstacle_builder.natnet.types import Frame, RigidBody, Vector3, Quaternion, Marker
-from obstacle_builder.geometry.transform import (
-    convert_position,
-    convert_quaternion,
-    convert_frame,
-    markers_to_local_frame,
-)
 from obstacle_builder.geometry.hull import (
-    build_hull,
     build_all_hulls,
     build_boundary,
-    HullResult,
+    build_hull,
 )
+from obstacle_builder.geometry.transform import (
+    convert_frame,
+    convert_position,
+    convert_quaternion,
+    markers_to_local_frame,
+)
+from obstacle_builder.natnet.client import MockNatNetConnection
+from obstacle_builder.natnet.types import Frame, Marker, Quaternion, RigidBody, Vector3
 from obstacle_builder.scene.scene_writer import (
     build_session,
     export_session,
@@ -346,16 +345,6 @@ class TestBoundary:
 
     def test_boundary_too_few_cameras(self):
         """Fewer than 4 cameras should return None."""
-        cameras = [
-            CameraInfo := type("CameraInfo", (), {
-                "position": Vector3(float(i), float(i), 3.0),
-                "is_corner": False,
-                "camera_id": i,
-                "name": f"cam_{i}",
-            })()
-            for i in range(3)
-        ]
-        # Use the real CameraInfo dataclass
         from obstacle_builder.natnet.types import CameraInfo as CI
         real_cameras = [
             CI(camera_id=i, name=f"cam_{i}", position=Vector3(float(i), float(i), 3.0))

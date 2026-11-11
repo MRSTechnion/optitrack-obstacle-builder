@@ -33,7 +33,6 @@ from scipy.spatial.transform import Rotation
 
 from ..natnet.types import CameraInfo, Frame, Marker, Quaternion, RigidBody, Vector3
 
-
 # ---------------------------------------------------------------------------
 # Axis remapping constants
 # ---------------------------------------------------------------------------

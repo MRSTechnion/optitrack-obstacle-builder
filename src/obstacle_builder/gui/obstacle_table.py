@@ -35,7 +35,7 @@ class ObstacleTable(QTableWidget):
     selection_changed = pyqtSignal(str)        # body name
     name_changed      = pyqtSignal(str, str)   # old, new
 
-    _COLUMNS = ["", "Name", "Markers", "Vol (cm³)"]
+    _COLUMNS = ("", "Name", "Markers", "Vol (cm³)")
 
     def __init__(self, parent=None):
         super().__init__(0, len(self._COLUMNS), parent)

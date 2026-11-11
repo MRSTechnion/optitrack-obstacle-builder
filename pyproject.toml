@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ros = ["rclpy"]
-dev = ["pytest>=7", "ruff>=0.4"]
+dev = ["pytest>=7", "ruff==0.17.4"]
 
 [project.scripts]
 obstacle-builder = "obstacle_builder.gui.main_window:main"
@@ -31,3 +31,10 @@ where = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+# Vendored OptiTrack NatNet SDK sample code - kept as shipped, not linted.
+extend-exclude = [
+    "src/obstacle_builder/natnet/DataDescriptions.py",
+    "src/obstacle_builder/natnet/MoCapData.py",
+    "src/obstacle_builder/natnet/NatNetClient.py",
+    "src/obstacle_builder/natnet/PythonSample.py",
+]

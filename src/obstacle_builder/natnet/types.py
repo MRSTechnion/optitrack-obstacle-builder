@@ -10,8 +10,6 @@ frame at this stage — conversion to Z-up happens in geometry/transform.py.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 # ---------------------------------------------------------------------------
 # Low-level primitives
@@ -188,18 +186,18 @@ class Frame:
     cameras: list[CameraInfo] = field(default_factory=list)
     is_recording: bool = False
 
-    property
+    @property
     def rigid_body_count(self) -> int:
         return len(self.rigid_bodies)
 
-    def get_body_by_name(self, name: str) -> Optional[RigidBody]:
+    def get_body_by_name(self, name: str) -> RigidBody | None:
         """Return the first rigid body with the given name, or None."""
         for body in self.rigid_bodies:
             if body.name == name:
                 return body
         return None
 
-    def get_body_by_id(self, body_id: int) -> Optional[RigidBody]:
+    def get_body_by_id(self, body_id: int) -> RigidBody | None:
         """Return the rigid body with the given ID, or None."""
         for body in self.rigid_bodies:
             if body.body_id == body_id:

@@ -25,9 +25,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
-
-import numpy as np
 
 from ..geometry.hull import BoundaryResult, HullResult, export_boundary_stl, export_hull_stl
 from ..natnet.types import RigidBody
@@ -56,10 +53,10 @@ class Session:
     notes        : optional free-text notes stored in scene.json
     """
     hulls:           dict[str, HullResult]
-    boundary:        Optional[BoundaryResult]
+    boundary:        BoundaryResult | None
     rigid_bodies:    list[RigidBody]
     convention:      str = "z_up"
-    wall_height:     Optional[float] = None
+    wall_height:     float | None = None
     wall_extrude_in: bool = False
     notes:           str = ""
 
@@ -189,10 +186,10 @@ def export_session(
 
 def build_session(
     hulls:           dict[str, HullResult],
-    boundary:        Optional[BoundaryResult],
+    boundary:        BoundaryResult | None,
     rigid_bodies:    list[RigidBody],
     z_up:            bool = True,
-    wall_height:     Optional[float] = None,
+    wall_height:     float | None = None,
     wall_extrude_in: bool = False,
     notes:           str = "",
 ) -> Session:
@@ -276,7 +273,7 @@ def _validate_scene(data: dict) -> None:
 def _find_body(
     bodies: list[RigidBody],
     name:   str,
-) -> Optional[RigidBody]:
+) -> RigidBody | None:
     """Return the RigidBody with the given name, or None."""
     for b in bodies:
         if b.name == name:
@@ -285,7 +282,7 @@ def _find_body(
 
 
 def _get_world_pose(
-    body: Optional[RigidBody],
+    body: RigidBody | None,
 ) -> tuple[tuple, tuple]:
     """
     Extract world-space position and quaternion from a RigidBody.

@@ -27,10 +27,9 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Optional
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QAction, QCloseEvent, QFont
+from PyQt6.QtGui import QAction, QCloseEvent
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -126,13 +125,13 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
 
         # --- State ----------------------------------------------------------
-        self._client: Optional[NatNetConnection | MockNatNetConnection] = None
-        self._raw_frame:   Optional[Frame] = None   # OptiTrack Y-up frame
-        self._world_frame: Optional[Frame] = None   # converted Z-up/Y-up frame
+        self._client: NatNetConnection | MockNatNetConnection | None = None
+        self._raw_frame:   Frame | None = None   # OptiTrack Y-up frame
+        self._world_frame: Frame | None = None   # converted Z-up/Y-up frame
         self._hulls  = {}          # name → HullResult
         self._boundary = None      # BoundaryResult or None
         self._z_up   = True        # current axis convention
-        self._worker: Optional[QThread] = None
+        self._worker: QThread | None = None
 
         # --- Build UI -------------------------------------------------------
         self._build_ui()
@@ -371,7 +370,6 @@ class MainWindow(QMainWindow):
     def _update_ui_state(self):
         """Enable/disable widgets based on connection and data state."""
         connected   = self._client is not None
-        has_frame   = self._world_frame is not None
         has_hulls   = bool(self._hulls)
         worker_busy = self._worker is not None and self._worker.isRunning()
 

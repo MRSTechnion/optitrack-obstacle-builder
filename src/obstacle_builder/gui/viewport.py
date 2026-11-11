@@ -20,39 +20,28 @@ HullResult and BoundaryResult, never about NatNet or the scene writer.
 from __future__ import annotations
 
 import math
-from typing import Optional
 
 import numpy as np
-
-from PyQt6.QtCore import Qt, QPoint
-from PyQt6.QtGui import QMouseEvent, QWheelEvent
-from PyQt6.QtOpenGLWidgets import QOpenGLWidget
-
 from OpenGL.GL import (
     GL_AMBIENT_AND_DIFFUSE,
-    GL_BACK,
     GL_BLEND,
     GL_COLOR_BUFFER_BIT,
     GL_COLOR_MATERIAL,
-    GL_CULL_FACE,
     GL_DEPTH_BUFFER_BIT,
     GL_DEPTH_TEST,
     GL_FILL,
     GL_FRONT_AND_BACK,
-    GL_FRONT,
-    GL_LIGHT0,
-    GL_LIGHTING,
     GL_LINE,
-    GL_LINES,
     GL_LINE_LOOP,
     GL_LINE_SMOOTH,
+    GL_LINES,
+    GL_MODELVIEW,
     GL_ONE_MINUS_SRC_ALPHA,
     GL_POINTS,
     GL_POLYGON_OFFSET_FILL,
     GL_PROJECTION,
     GL_SRC_ALPHA,
     GL_TRIANGLES,
-    GL_MODELVIEW,
     glBegin,
     glBlendFunc,
     glClear,
@@ -71,12 +60,14 @@ from OpenGL.GL import (
     glPopMatrix,
     glPushMatrix,
     glRotatef,
-    glScalef,
     glTranslatef,
     glVertex3f,
     glViewport,
 )
 from OpenGL.GLU import gluPerspective
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtGui import QMouseEvent, QWheelEvent
+from PyQt6.QtOpenGLWidgets import QOpenGLWidget
 
 from ..geometry.hull import BoundaryResult, HullResult
 
@@ -105,9 +96,9 @@ class Viewport3D(QOpenGLWidget):
 
         # Scene data
         self._hulls:    dict[str, HullResult]   = {}
-        self._boundary: Optional[BoundaryResult] = None
+        self._boundary: BoundaryResult | None = None
         self._show_boundary = True
-        self._selected: Optional[str] = None
+        self._selected: str | None = None
 
         # World-space pose per obstacle: name → (position, quaternion)
         # position  = (x, y, z)
@@ -124,8 +115,8 @@ class Viewport3D(QOpenGLWidget):
         self._pan_x     =   0.0    # pan in world X
         self._pan_y     =   0.0    # pan in world Y
 
-        self._last_mouse: Optional[QPoint] = None
-        self._mouse_btn:  Optional[Qt.MouseButton] = None
+        self._last_mouse: QPoint | None = None
+        self._mouse_btn:  Qt.MouseButton | None = None
 
         self.setMinimumSize(400, 400)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -137,9 +128,9 @@ class Viewport3D(QOpenGLWidget):
     def update_scene(
         self,
         hulls:         dict[str, HullResult],
-        boundary:      Optional[BoundaryResult],
+        boundary:      BoundaryResult | None,
         show_boundary: bool = True,
-        bodies:        list = None,   # list[RigidBody] — for world poses
+        bodies:        list | None = None,   # list[RigidBody] — for world poses
     ):
         """Replace the current scene data and redraw."""
         self._hulls         = hulls
@@ -179,7 +170,7 @@ class Viewport3D(QOpenGLWidget):
         }
         self.update()
 
-    def set_selected(self, name: Optional[str]):
+    def set_selected(self, name: str | None):
         """Highlight the named obstacle (or clear selection if None)."""
         self._selected = name
         self.update()
