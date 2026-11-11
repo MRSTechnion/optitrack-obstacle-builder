@@ -20,6 +20,7 @@ These are found at:
 from __future__ import annotations
 
 import logging
+import socket
 import sys
 import threading
 import time
@@ -39,6 +40,8 @@ if _NATNET_DIR not in sys.path:
     sys.path.append(_NATNET_DIR)
 
 try:
+    import DataDescriptions as _SDKDataDescriptions  # same module the SDK uses
+
     from .NatNetClient import NatNetClient as _NatNetSDK
     _SDK_AVAILABLE = True
     _SDK_IMPORT_ERROR: ImportError | None = None
@@ -52,7 +55,10 @@ logger = logging.getLogger(__name__)
 # Network defaults — adjust server_ip to match your OptiTrack PC
 # ---------------------------------------------------------------------------
 DEFAULT_SERVER_IP     = "192.168.1.100"
-DEFAULT_CLIENT_IP     = "127.0.0.1"
+# None = auto-detect the local interface that routes to the server (see
+# _local_ip_for). Must be a real NIC address for multicast: joining the
+# group on 127.0.0.1 means no frames are ever received.
+DEFAULT_CLIENT_IP: str | None = None
 DEFAULT_USE_MULTICAST = True
 
 # Quality threshold: warn if mean marker error exceeds this (metres)
@@ -92,7 +98,7 @@ class NatNetConnection:
     def __init__(
         self,
         server_ip:         str  = DEFAULT_SERVER_IP,
-        client_ip:         str  = DEFAULT_CLIENT_IP,
+        client_ip:         str | None = DEFAULT_CLIENT_IP,
         use_multicast:     bool = DEFAULT_USE_MULTICAST,
         on_frame_received: Callable[[Frame], None] | None = None,
     ) -> None:
@@ -155,6 +161,8 @@ class NatNetConnection:
 
         # Configure before run() — settings are locked after run()
         self._sdk.server_ip_address = self.server_ip
+        if self.client_ip is None:
+            self.client_ip = _local_ip_for(self.server_ip)
         self._sdk.local_ip_address  = self.client_ip
         self._sdk.use_multicast     = self.use_multicast
         self._sdk.print_level       = 0   # silence SDK stdout
@@ -169,7 +177,8 @@ class NatNetConnection:
             return False
 
         self._running = True
-        logger.info(f"NatNet started — server={self.server_ip}, multicast={self.use_multicast}")
+        logger.info(f"NatNet started — server={self.server_ip}, local={self.client_ip}, "
+                    f"multicast={self.use_multicast}")
 
         # Wait briefly for server handshake
         if not self._wait_until_connected(timeout=5.0):
@@ -490,14 +499,79 @@ class _NatNetSDKInterceptor(_NatNetSDK if _SDK_AVAILABLE else object):
 
     # The SDK calls this after parsing DataDescriptions.
     def _NatNetClient__unpack_data_descriptions(self, data, packet_size, major, minor):
-        offset, data_descs = super()._NatNetClient__unpack_data_descriptions(
-            data, packet_size, major, minor
-        )
+        data = bytes(data)
+        consumed = len(data)
+        try:
+            if _has_description_sizes(major, minor):
+                # Work around a bug in OptiTrack's Python sample (NatNet SDK
+                # 4.1): see _strip_description_sizes().
+                data, consumed = _strip_description_sizes(data)
+            _, data_descs = super()._NatNetClient__unpack_data_descriptions(
+                data, packet_size, major, minor
+            )
+        except Exception:
+            # Keep the SDK's command thread alive; without descriptions we
+            # just lack body names / camera positions.
+            logger.exception(
+                f"NatNet SDK failed to parse data descriptions (stream NatNet "
+                f"{major}.{minor}). The Python SDK may not match Motive's version."
+            )
+            return consumed, _SDKDataDescriptions.DataDescriptions()
         try:
             self._owner._on_data_descriptions(data_descs)
         except Exception:
             logger.exception("Error handling NatNet data descriptions")
-        return offset, data_descs
+        return consumed, data_descs
+
+
+def _local_ip_for(server_ip: str) -> str:
+    """
+    Return the IP of the local interface the OS would use to reach server_ip.
+    Connecting a UDP socket sends no packets; it only selects a route.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect((server_ip, 1510))
+            return s.getsockname()[0]
+        except OSError:
+            logger.warning(f"No route to {server_ip}; listening on all interfaces.")
+            return "0.0.0.0"
+
+
+def _has_description_sizes(major: int, minor: int) -> bool:
+    """NatNet >= 4.1 prefixes every data description with its size in bytes."""
+    return (major == 4 and minor >= 1) or major > 4
+
+
+def _strip_description_sizes(data: bytes) -> tuple[bytes, int]:
+    """
+    Convert a NatNet >= 4.1 data-descriptions payload to the layout the
+    vendored Python SDK parser expects.
+
+    Wire format (per OptiTrack's C++ PacketClient.cpp, UnpackDescription):
+        int32 count, then per description: int32 type, int32 sizeInBytes, body
+    The SDK's Python parser (NatNetClient.py 4.1) omits sizeInBytes, so it
+    reads the size as the start of the body and misaligns (e.g.
+    UnicodeDecodeError on the rigid-body name). We drop the size fields and
+    use them to cut each body out exactly.
+
+    Returns (payload without size fields, number of input bytes consumed).
+    """
+    count = int.from_bytes(data[0:4], "little")
+    out = bytearray(data[0:4])
+    offset = 4
+    for _ in range(count):
+        if offset + 8 > len(data):
+            raise ValueError("Truncated NatNet data-descriptions packet")
+        type_bytes = data[offset:offset + 4]
+        size = int.from_bytes(data[offset + 4:offset + 8], "little")
+        offset += 8
+        if size < 0 or offset + size > len(data):
+            raise ValueError(f"Bad NatNet description size {size} at offset {offset - 4}")
+        out += type_bytes
+        out += data[offset:offset + size]
+        offset += size
+    return bytes(out), offset
 
 
 # ---------------------------------------------------------------------------
