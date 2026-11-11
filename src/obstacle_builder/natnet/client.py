@@ -1,0 +1,555 @@
+"""
+NatNet 4.1 client wrapper.
+
+Wraps the OptiTrack NatNetClient SDK into a clean three-method interface:
+
+    client = NatNetConnection(server_ip="192.168.1.100")
+    client.connect()
+    frame = client.capture_frame()
+    client.disconnect()
+
+Required files in this same directory (copy from the OptiTrack PC):
+    NatNetClient.py       — SDK core
+    DataDescriptions.py   — description data structures
+    MoCapData.py          — frame data structures
+
+These are found at:
+    C:\\Users\\User\\Downloads\\NatNet_SDK_4.1\\NatNetSDK\\Samples\\PythonClient\\
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from typing import Callable, Optional
+
+from .types import CameraInfo, Frame, Marker, Quaternion, RigidBody, Vector3
+
+try:
+    from .NatNetClient import NatNetClient as _NatNetSDK
+    _SDK_AVAILABLE = True
+except ImportError:
+    _SDK_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Network defaults — adjust server_ip to match your OptiTrack PC
+# ---------------------------------------------------------------------------
+DEFAULT_SERVER_IP     = "192.168.1.100"
+DEFAULT_CLIENT_IP     = "127.0.0.1"
+DEFAULT_USE_MULTICAST = True
+
+# Quality threshold: warn if mean marker error exceeds this (metres)
+_ERROR_THRESHOLD_M = 0.005
+
+# How many frames to accumulate for capture_frame() before picking best
+_CAPTURE_N_FRAMES  = 10
+_CAPTURE_TIMEOUT_S = 5.0
+
+
+# ---------------------------------------------------------------------------
+# NatNetConnection
+# ---------------------------------------------------------------------------
+
+class NatNetConnection:
+    """
+    Thin, correct wrapper around the NatNet 4.1 SDK.
+
+    The SDK works as follows:
+      - sdk.run()           opens sockets and starts receiver threads
+      - sdk.shutdown()      closes sockets and joins threads
+      - sdk.connected()     returns True once server handshake is complete
+      - sdk.rigid_body_listener = fn(id, pos, rot)   called per body per frame
+      - sdk.new_frame_listener  = fn(data_dict)       called once per frame
+        data_dict keys: frame_number, timestamp, is_recording,
+                        rigid_body_count, labeled_marker_count, ...
+        NOTE: data_dict does NOT contain positions — only counts + metadata.
+
+    Marker positions come from labeled_marker_data inside the full MoCapData
+    object. The SDK does not pass MoCapData to new_frame_listener, so we
+    capture it by storing the last parsed mocap_data object via a subclass.
+
+    Camera positions come from DataDescriptions, requested via
+    NAT_REQUEST_MODELDEF after run().
+    """
+
+    def __init__(
+        self,
+        server_ip:         str  = DEFAULT_SERVER_IP,
+        client_ip:         str  = DEFAULT_CLIENT_IP,
+        use_multicast:     bool = DEFAULT_USE_MULTICAST,
+        on_frame_received: Optional[Callable[[Frame], None]] = None,
+    ) -> None:
+        self.server_ip     = server_ip
+        self.client_ip     = client_ip
+        self.use_multicast = use_multicast
+        self._on_frame_cb  = on_frame_received
+
+        self._sdk: Optional[_NatNetSDK] = None
+        self._running = False
+
+        # Populated by _on_rigid_body — latest pose per body id
+        self._rb_poses:  dict[int, tuple] = {}   # id → (pos, rot, error, valid)
+        self._rb_lock    = threading.Lock()
+
+        # Populated by _on_new_frame — latest frame metadata
+        self._frame_meta: dict = {}
+        self._frame_event = threading.Event()
+
+        # Labeled markers: model_id → list of (pos, residual)
+        # Updated each frame via our MoCapData intercept
+        self._labeled_markers: dict[int, list] = {}
+        self._markers_lock = threading.Lock()
+
+        # Body name registry: id → name  (from DataDescriptions)
+        self._id_to_name: dict[int, str] = {}
+        self._names_received = threading.Event()
+
+        # Camera list (from DataDescriptions)
+        self._cameras: list[CameraInfo] = []
+        self._cameras_received = threading.Event()
+
+        # Buffer for capture_frame()
+        self._capture_buffer: list[Frame] = []
+        self._capture_lock   = threading.Lock()
+        self._capturing      = False
+
+        self._latest_frame: Optional[Frame] = None
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def connect(self) -> bool:
+        """
+        Start the NatNet connection.
+        Returns True if the SDK started successfully.
+        Note: connected() may still return False for a few hundred ms
+        while the server handshake completes — use wait_until_connected().
+        """
+        if not _SDK_AVAILABLE:
+            logger.error(
+                "NatNetClient.py not found in src/obstacle_builder/natnet/. "
+                "Copy it from the OptiTrack PC."
+            )
+            return False
+
+        self._sdk = _NatNetSDKInterceptor(self)
+
+        # Configure before run() — settings are locked after run()
+        self._sdk.server_ip_address = self.server_ip
+        self._sdk.local_ip_address  = self.client_ip
+        self._sdk.use_multicast     = self.use_multicast
+        self._sdk.print_level       = 0   # silence SDK stdout
+
+        # Register callbacks
+        self._sdk.rigid_body_listener = self._on_rigid_body
+        self._sdk.new_frame_listener  = self._on_new_frame
+
+        ok = self._sdk.run()
+        if not ok:
+            logger.error("NatNet sdk.run() failed — check IP addresses and that Motive is streaming.")
+            return False
+
+        self._running = True
+        logger.info(f"NatNet started — server={self.server_ip}, multicast={self.use_multicast}")
+
+        # Wait briefly for server handshake
+        if not self._wait_until_connected(timeout=5.0):
+            logger.error("Timed out waiting for server handshake. Check network and Motive streaming settings.")
+            self.disconnect()
+            return False
+
+        logger.info(f"Connected. App: {self._sdk.get_application_name()}, "
+                    f"NatNet version: {self._sdk.get_nat_net_requested_version()}")
+
+        # Request data descriptions to get rigid body names and camera positions
+        self._sdk.send_request(
+            self._sdk.command_socket,
+            self._sdk.NAT_REQUEST_MODELDEF,
+            "",
+            (self.server_ip, self._sdk.command_port),
+        )
+
+        # Give descriptions time to arrive
+        self._names_received.wait(timeout=3.0)
+        self._cameras_received.wait(timeout=3.0)
+
+        if not self._id_to_name:
+            logger.warning(
+                "No rigid body names received. "
+                "Check that rigid bodies are defined in Motive."
+            )
+        if not self._cameras:
+            logger.warning("No camera descriptions received.")
+
+        return True
+
+    def disconnect(self) -> None:
+        """Shut down the NatNet connection cleanly."""
+        if self._sdk and self._running:
+            self._sdk.shutdown()
+            self._running = False
+            logger.info("NatNet disconnected.")
+
+    @property
+    def is_connected(self) -> bool:
+        return self._running and (self._sdk is not None) and self._sdk.connected()
+
+    def capture_frame(self, num_frames: int = _CAPTURE_N_FRAMES) -> Optional[Frame]:
+        """
+        Collect num_frames consecutive frames and return the best one
+        (lowest combined mean marker error across all rigid bodies).
+
+        Blocks for up to _CAPTURE_TIMEOUT_S seconds.
+        Returns None if not connected or no frames arrive.
+        """
+        if not self._running:
+            logger.error("capture_frame() called but not connected.")
+            return None
+
+        logger.info(f"Capturing {num_frames} frames...")
+
+        with self._capture_lock:
+            self._capture_buffer.clear()
+            self._capturing = True
+
+        deadline = time.monotonic() + _CAPTURE_TIMEOUT_S
+        while time.monotonic() < deadline:
+            with self._capture_lock:
+                if len(self._capture_buffer) >= num_frames:
+                    break
+            time.sleep(0.01)
+
+        with self._capture_lock:
+            self._capturing = False
+            buffer = list(self._capture_buffer)
+
+        if not buffer:
+            logger.error("No frames received during capture window.")
+            return None
+
+        best = self._select_best_frame(buffer)
+        best.cameras = list(self._cameras)
+
+        logger.info(
+            f"Captured frame #{best.frame_number} — "
+            f"{best.rigid_body_count} bodies, "
+            f"{len(best.cameras)} cameras"
+        )
+        self._warn_poor_tracking(best)
+        return best
+
+    @property
+    def latest_frame(self) -> Optional[Frame]:
+        """Most recently received frame. Updated continuously."""
+        return self._latest_frame
+
+    def set_live_callback(self, cb: Optional[Callable[[Frame], None]]) -> None:
+        self._on_frame_cb = cb
+
+    # ------------------------------------------------------------------
+    # SDK callbacks — called on the SDK receiver thread
+    # ------------------------------------------------------------------
+
+    def _on_rigid_body(self, body_id: int, pos: tuple, rot: tuple) -> None:
+        """
+        Called by rigid_body_listener for each rigid body each frame.
+        pos = (x, y, z), rot = (qx, qy, qz, qw)
+        Note: error and tracking_valid come from the MoCapData intercept.
+        We store pos/rot here and merge with error/valid in _build_frame().
+        """
+        with self._rb_lock:
+            existing = self._rb_poses.get(body_id, (None, None, 0.0, False))
+            self._rb_poses[body_id] = (pos, rot, existing[2], existing[3])
+
+    def _on_new_frame(self, data_dict: dict) -> None:
+        """
+        Called by new_frame_listener once per frame.
+        data_dict contains frame metadata only — not positions.
+        Positions come from _on_mocap_data() via the SDK interceptor.
+        """
+        self._frame_meta = data_dict
+        self._frame_event.set()
+
+        frame = self._build_frame(data_dict)
+        if frame is None:
+            return
+
+        self._latest_frame = frame
+
+        if self._capturing:
+            with self._capture_lock:
+                self._capture_buffer.append(frame)
+
+        if self._on_frame_cb:
+            try:
+                self._on_frame_cb(frame)
+            except Exception:
+                logger.exception("Exception in frame callback")
+
+    def _on_mocap_data(self, mocap_data) -> None:
+        """
+        Called by our SDK interceptor with the full MoCapData object
+        after each frame is parsed. This is where we get:
+          - Per-body error and tracking_valid
+          - Labeled marker positions (keyed by model_id)
+        """
+        # Update error + tracking_valid for each rigid body
+        for rb in mocap_data.rigid_body_data.rigid_body_list:
+            with self._rb_lock:
+                existing = self._rb_poses.get(rb.id_num, (rb.pos, rb.rot, 0.0, False))
+                self._rb_poses[rb.id_num] = (
+                    existing[0],
+                    existing[1],
+                    rb.error,
+                    rb.tracking_valid,
+                )
+
+        # Update labeled markers grouped by model_id
+        new_markers: dict[int, list] = {}
+        for lm in mocap_data.labeled_marker_data.labeled_marker_list:
+            model_id = lm.id_num >> 16
+            if model_id not in new_markers:
+                new_markers[model_id] = []
+            new_markers[model_id].append((lm.pos, lm.residual))
+
+        with self._markers_lock:
+            self._labeled_markers = new_markers
+
+    def _on_data_descriptions(self, data_descs) -> None:
+        """
+        Called by our SDK interceptor when DataDescriptions arrive.
+        Populates the id→name registry and camera list.
+        """
+        # Rigid body names
+        for rb_desc in data_descs.rigid_body_list:
+            name = rb_desc.sz_name
+            if isinstance(name, bytes):
+                name = name.decode("utf-8")
+            self._id_to_name[rb_desc.id_num] = name
+            logger.debug(f"Registered body: id={rb_desc.id_num} name='{name}'")
+        if self._id_to_name:
+            self._names_received.set()
+
+        # Cameras
+        cameras = []
+        for cam in data_descs.camera_list:
+            name = cam.name
+            if isinstance(name, bytes):
+                name = name.decode("utf-8")
+            pos = cam.position   # [x, y, z]
+            cameras.append(CameraInfo(
+                camera_id = len(cameras),
+                name      = name,
+                position  = Vector3(pos[0], pos[1], pos[2]),
+            ))
+        if cameras:
+            self._cameras = cameras
+            self._cameras_received.set()
+            logger.info(f"Received {len(cameras)} cameras from data descriptions.")
+
+    # ------------------------------------------------------------------
+    # Frame assembly
+    # ------------------------------------------------------------------
+
+    def _build_frame(self, meta: dict) -> Optional[Frame]:
+        """Assemble a Frame dataclass from the latest cached SDK state."""
+        try:
+            with self._rb_lock:
+                rb_snapshot = dict(self._rb_poses)
+            with self._markers_lock:
+                marker_snapshot = dict(self._labeled_markers)
+
+            rigid_bodies = []
+            for body_id, (pos, rot, error, valid) in rb_snapshot.items():
+                name = self._id_to_name.get(body_id, f"rigid_body_{body_id}")
+
+                # Collect labeled markers belonging to this body
+                markers = []
+                for i, (mpos, residual) in enumerate(marker_snapshot.get(body_id, [])):
+                    markers.append(Marker(
+                        marker_id = i,
+                        position  = Vector3(mpos[0], mpos[1], mpos[2]),
+                        residual  = residual,
+                    ))
+
+                rigid_bodies.append(RigidBody(
+                    body_id        = body_id,
+                    name           = name,
+                    position       = Vector3(pos[0], pos[1], pos[2]),
+                    orientation    = Quaternion(rot[0], rot[1], rot[2], rot[3]),
+                    markers        = markers,
+                    tracking_valid = valid,
+                    mean_error     = error,
+                ))
+
+            return Frame(
+                frame_number = meta.get("frame_number", 0),
+                timestamp    = meta.get("timestamp", 0.0),
+                rigid_bodies = rigid_bodies,
+                cameras      = [],
+                is_recording = meta.get("is_recording", False),
+            )
+        except Exception:
+            logger.exception("Error building frame")
+            return None
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _wait_until_connected(self, timeout: float = 5.0) -> bool:
+        """Poll sdk.connected() until True or timeout."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._sdk and self._sdk.connected():
+                return True
+            time.sleep(0.1)
+        return False
+
+    @staticmethod
+    def _select_best_frame(frames: list[Frame]) -> Frame:
+        """Return the frame with the lowest average mean_error across bodies."""
+        def score(f: Frame) -> float:
+            valid = [b for b in f.rigid_bodies if b.tracking_valid]
+            if not valid:
+                return float("inf")
+            return sum(b.mean_error for b in valid) / len(valid)
+        return min(frames, key=score)
+
+    @staticmethod
+    def _warn_poor_tracking(frame: Frame) -> None:
+        for body in frame.rigid_bodies:
+            if not body.tracking_valid:
+                logger.warning(
+                    f"'{body.name}' (id={body.body_id}): tracking invalid — "
+                    "markers may be occluded."
+                )
+            elif body.mean_error > _ERROR_THRESHOLD_M:
+                logger.warning(
+                    f"'{body.name}' (id={body.body_id}): "
+                    f"mean error {body.mean_error * 1000:.1f} mm "
+                    f"(threshold {_ERROR_THRESHOLD_M * 1000:.0f} mm)."
+                )
+
+
+# ---------------------------------------------------------------------------
+# SDK interceptor — subclass that hooks into the parsed data stream
+# ---------------------------------------------------------------------------
+
+class _NatNetSDKInterceptor(_NatNetSDK if _SDK_AVAILABLE else object):
+    """
+    Subclass of NatNetClient that overrides the internal unpack methods
+    to give us access to the full MoCapData and DataDescriptions objects
+    that the SDK parses but does not expose via listeners.
+    """
+
+    def __init__(self, owner: NatNetConnection) -> None:
+        if _SDK_AVAILABLE:
+            super().__init__()
+        self._owner = owner
+
+    # The SDK calls this internally after parsing each frame.
+    # We override it to intercept the mocap_data object.
+    def __unpack_mocap_data(self, data, packet_size, major, minor):
+        offset, mocap_data = super().__unpack_mocap_data(data, packet_size, major, minor)
+        try:
+            self._owner._on_mocap_data(mocap_data)
+        except Exception:
+            pass
+        return offset, mocap_data
+
+    # The SDK calls this after parsing DataDescriptions.
+    def __unpack_data_descriptions(self, data, packet_size, major, minor):
+        offset, data_descs = super().__unpack_data_descriptions(data, packet_size, major, minor)
+        try:
+            self._owner._on_data_descriptions(data_descs)
+        except Exception:
+            pass
+        return offset, data_descs
+
+
+# ---------------------------------------------------------------------------
+# Mock connection — for development without OptiTrack hardware
+# ---------------------------------------------------------------------------
+
+class MockNatNetConnection:
+    """
+    Drop-in replacement for NatNetConnection.
+    Loads data from tests/fixtures/sample_scene.json instead of
+    connecting to OptiTrack. Identical public API.
+
+    Usage:
+        client = MockNatNetConnection("tests/fixtures/sample_scene.json")
+        client.connect()
+        frame = client.capture_frame()
+    """
+
+    def __init__(self, fixture_path: str = "tests/fixtures/sample_scene.json") -> None:
+        import json
+        from pathlib import Path
+        with open(Path(fixture_path)) as f:
+            self._data = json.load(f)
+        self._connected = False
+        self._frame: Optional[Frame] = None
+
+    def connect(self) -> bool:
+        self._frame = self._build_frame()
+        self._connected = True
+        logger.info("MockNatNetConnection: fixture loaded.")
+        return True
+
+    def disconnect(self) -> None:
+        self._connected = False
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+    def capture_frame(self, num_frames: int = 1) -> Optional[Frame]:
+        return self._frame
+
+    @property
+    def latest_frame(self) -> Optional[Frame]:
+        return self._frame
+
+    def set_live_callback(self, cb) -> None:
+        pass
+
+    def _build_frame(self) -> Frame:
+        rigid_bodies = []
+        for rb in self._data.get("rigid_bodies", []):
+            markers = [
+                Marker(marker_id=i, position=Vector3(*m))
+                for i, m in enumerate(rb.get("markers", []))
+            ]
+            p, q = rb["position"], rb["quaternion"]
+            rigid_bodies.append(RigidBody(
+                body_id        = rb["id"],
+                name           = rb["name"],
+                position       = Vector3(*p),
+                orientation    = Quaternion(*q),
+                markers        = markers,
+                tracking_valid = True,
+                mean_error     = 0.0,
+            ))
+
+        cameras = [
+            CameraInfo(
+                camera_id = c["id"],
+                name      = f"Camera {c['id']}",
+                position  = Vector3(*c["position"]),
+                is_corner = c.get("is_corner", False),
+            )
+            for c in self._data.get("cameras", [])
+        ]
+
+        return Frame(
+            frame_number = 1,
+            timestamp    = 0.0,
+            rigid_bodies = rigid_bodies,
+            cameras      = cameras,
+        )

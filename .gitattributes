@@ -1,0 +1,16 @@
+# Auto-detect text files and enforce LF on commit
+# text=auto
+
+# Explicit LF for source files
+*.py    text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+
+# Binary - never mangle
+*.stl   binary
+*.png   binary
+*.jpg   binary

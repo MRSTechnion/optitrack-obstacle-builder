@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "obstacle-builder"
+version = "0.1.0"
+description = "Generate 3D obstacle models from OptiTrack rogid bodies"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "PyQt6>6.6",
+    "PyOpenGL>=3.1",
+    "numpy>=1.26",
+    "scipy>=1.12",
+    "numpy-stl>=3.0",
+    "platformdirs>=4.0",
+]
+
+[project.optional-dependencies]
+ros = ["rclpy"]
+dev = ["pytest>=7", "ruff>=0.4"]
+
+[project.scripts]
+obstacle-builder = "obstacle_builder.gui.main_window:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
