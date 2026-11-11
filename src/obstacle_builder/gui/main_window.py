@@ -129,6 +129,7 @@ class MainWindow(QMainWindow):
         self._raw_frame:   Frame | None = None   # OptiTrack Y-up frame
         self._world_frame: Frame | None = None   # converted Z-up/Y-up frame
         self._hulls  = {}          # name → HullResult
+        self._skipped_bodies: list[str] = []   # streamed bodies with no hull
         self._boundary = None      # BoundaryResult or None
         self._z_up   = True        # current axis convention
         self._worker: QThread | None = None
@@ -496,11 +497,14 @@ class MainWindow(QMainWindow):
         # Rebuild geometry
         self._rebuild_geometry()
 
-        n = len(frame.rigid_bodies)
-        self._set_status(
-            f"Frame #{frame.frame_number} — "
-            f"{n} rigid bod{'y' if n == 1 else 'ies'}"
-        )
+        # Count obstacles (bodies that produced a hull), not every streamed
+        # body: the "boundary" body and untracked/degenerate bodies are not
+        # obstacles.
+        n = len(self._hulls)
+        status = f"Frame #{frame.frame_number} — {n} obstacle{'' if n == 1 else 's'}"
+        if self._skipped_bodies:
+            status += f" (skipped: {', '.join(self._skipped_bodies)})"
+        self._set_status(status)
 
     # ------------------------------------------------------------------
     # Geometry pipeline
@@ -522,6 +526,8 @@ class MainWindow(QMainWindow):
         ]
 
         self._hulls = build_all_hulls(obstacle_bodies)
+        # Bodies that could not become obstacles (untracked, too few markers…)
+        self._skipped_bodies = [b.name for b in obstacle_bodies if b.name not in self._hulls]
 
         # Boundary
         wall_height = (
