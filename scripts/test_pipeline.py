@@ -4,11 +4,12 @@ Run from repo root: python scripts/test_pipeline.py
 """
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from obstacle_builder.natnet.client import MockNatNetConnection
-from obstacle_builder.geometry.transform import convert_frame
 from obstacle_builder.geometry.hull import build_all_hulls, build_boundary
+from obstacle_builder.geometry.transform import convert_frame
+from obstacle_builder.natnet.client import MockNatNetConnection
 from obstacle_builder.scene.scene_writer import build_session, export_session
 
 FIXTURE = Path("tests/fixtures/sample_scene.json")
