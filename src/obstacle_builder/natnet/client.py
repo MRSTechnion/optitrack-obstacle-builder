@@ -51,6 +51,50 @@ except ImportError as _e:
     _SDK_IMPORT_ERROR = _e
 
 logger = logging.getLogger(__name__)
+_sdk_logger = logging.getLogger(f"{__name__}.sdk")
+
+
+class _SDKPrintToLogging:
+    """
+    Replacement for print() inside the vendored NatNet SDK module.
+
+    The SDK print()s unconditionally - e.g. "MoCap Frame: N" plus a blank
+    line for every frame (~180/s) - regardless of print_level. Python looks
+    up `print` in a module's globals before builtins, so we install this as
+    `print` in the SDK module's namespace (the SDK file itself is untouched).
+
+    - Routine output goes to DEBUG (hidden unless debug logging is enabled).
+    - Lines starting with ERROR/WARNING (occasional frame decode failures)
+      go to WARNING, rate-limited so they cannot flood the log.
+    """
+
+    def __init__(self, interval_s: float = 30.0) -> None:
+        self._interval_s = interval_s
+        self._last_warn  = float("-inf")
+        self._suppressed = 0
+        self._lock       = threading.Lock()
+
+    def __call__(self, *args, sep=" ", end="\n", file=None, flush=False) -> None:
+        msg = sep.join(str(a) for a in args).strip()
+        if not msg:
+            return
+        if not msg.startswith(("ERROR", "WARNING")):
+            _sdk_logger.debug(msg)
+            return
+        with self._lock:
+            now = time.monotonic()
+            if now - self._last_warn < self._interval_s:
+                self._suppressed += 1
+                _sdk_logger.debug(msg)
+                return
+            suppressed, self._suppressed = self._suppressed, 0
+            self._last_warn = now
+        extra = f" ({suppressed} similar SDK messages suppressed)" if suppressed else ""
+        _sdk_logger.warning(f"NatNet SDK: {msg}{extra}")
+
+
+if _SDK_AVAILABLE:
+    sys.modules[_NatNetSDK.__module__].print = _SDKPrintToLogging()
 
 # ---------------------------------------------------------------------------
 # Network defaults — adjust server_ip to match your OptiTrack PC
@@ -526,6 +570,16 @@ class _NatNetSDKInterceptor(_NatNetSDK if _SDK_AVAILABLE else object):
             sock.close()
             return None
         return sock
+
+    # Multicast frames start arriving as soon as the data socket opens, before
+    # Motive has answered NAT_CONNECT. Until then the SDK's NatNet version is
+    # 0.0, so it parses those frames with the wrong layout ("Marker count too
+    # high", "Early End of Data Frame Suffix Data"). Drop them instead.
+    def _NatNetClient__process_message(self, data, print_level=0):
+        if (self.get_major() == 0
+                and int.from_bytes(data[0:2], "little") == self.NAT_FRAMEOFDATA):
+            return self.NAT_FRAMEOFDATA
+        return super()._NatNetClient__process_message(data, print_level)
 
     # The SDK calls this internally after parsing each frame.
     # We override it to intercept the mocap_data object.

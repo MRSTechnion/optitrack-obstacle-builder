@@ -18,6 +18,7 @@ from obstacle_builder.natnet.NatNetClient import NatNetClient
 from obstacle_builder.natnet.types import Frame
 
 HOOKED = [
+    "_NatNetClient__process_message",
     "_NatNetClient__unpack_mocap_data",
     "_NatNetClient__unpack_data_descriptions",
     "_NatNetClient__create_data_socket",
@@ -244,3 +245,43 @@ def test_invalid_stream_up_axis_rejected():
 def test_default_stream_up_axis_is_z():
     """The lab's Motive streams Z-up; the app does not expose this setting."""
     assert client_mod.NatNetConnection().stream_up_axis == "z"
+
+
+# ---------------------------------------------------------------------------
+# SDK print() redirection
+# ---------------------------------------------------------------------------
+
+def test_sdk_print_is_redirected_to_logging():
+    sdk_module = __import__(NatNetClient.__module__, fromlist=["*"])
+    assert isinstance(sdk_module.print, client_mod._SDKPrintToLogging)
+
+
+def test_sdk_routine_output_is_debug_only(capsys, caplog):
+    p = client_mod._SDKPrintToLogging()
+    with caplog.at_level("DEBUG", logger="obstacle_builder.natnet.client.sdk"):
+        p("MoCap Frame: 123\n")
+        p("")
+    assert capsys.readouterr().out == ""
+    assert [r.levelname for r in caplog.records] == ["DEBUG"]
+
+
+def test_sdk_errors_are_rate_limited(caplog):
+    p = client_mod._SDKPrintToLogging(interval_s=3600)
+    with caplog.at_level("WARNING", logger="obstacle_builder.natnet.client.sdk"):
+        for _ in range(5):
+            p("ERROR: Early End of Data Frame Suffix Data")
+    assert len(caplog.records) == 1
+    assert "Early End of Data Frame Suffix Data" in caplog.text
+
+
+def test_frames_before_handshake_are_dropped(monkeypatch):
+    """Frames arriving before Motive reports its NatNet version are not parsed."""
+    called = []
+    monkeypatch.setattr(
+        NatNetClient, "_NatNetClient__unpack_mocap_data",
+        lambda self, *a: called.append(1) or (0, None),
+    )
+    sdk = client_mod._NatNetSDKInterceptor(_FakeOwner())
+    packet = struct.pack("<HH", sdk.NAT_FRAMEOFDATA, 4) + b"\0" * 4
+    assert sdk._NatNetClient__process_message(packet, 0) == sdk.NAT_FRAMEOFDATA
+    assert called == []
