@@ -285,3 +285,41 @@ def test_frames_before_handshake_are_dropped(monkeypatch):
     packet = struct.pack("<HH", sdk.NAT_FRAMEOFDATA, 4) + b"\0" * 4
     assert sdk._NatNetClient__process_message(packet, 0) == sdk.NAT_FRAMEOFDATA
     assert called == []
+
+
+def test_empty_rigid_bodies_are_ignored():
+    """Bodies Motive publishes without any visible markers are not in the Frame."""
+    conn = _zup_conn("z")
+    conn._id_to_name[6] = "cf_roi"
+    conn._rb_poses[6] = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), 0.0, False)
+    frame = conn._build_frame({"frame_number": 1})
+    assert [b.name for b in frame.rigid_bodies] == ["Box_01"]
+
+
+def test_shutdown_does_not_hang_without_traffic():
+    """On Linux, closing a socket does not wake a blocked recvfrom(); shutdown must."""
+    import socket
+    import threading
+
+    sdk = client_mod._NatNetSDKInterceptor(_FakeOwner())
+    sdk.command_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sdk.data_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    for s in (sdk.command_socket, sdk.data_socket):
+        s.bind(("127.0.0.1", 0))
+
+    def loop(sock):  # same shape as the SDK's receive loops
+        while not sdk.stop_threads:
+            try:
+                sock.recvfrom(65535)
+            except OSError:
+                return
+
+    sdk.command_thread = threading.Thread(target=loop, args=(sdk.command_socket,), daemon=True)
+    sdk.data_thread = threading.Thread(target=loop, args=(sdk.data_socket,), daemon=True)
+    sdk.command_thread.start()
+    sdk.data_thread.start()
+
+    done = threading.Thread(target=sdk.shutdown, daemon=True)
+    done.start()
+    done.join(timeout=3)
+    assert not done.is_alive(), "shutdown() hung"

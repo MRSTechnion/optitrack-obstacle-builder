@@ -456,6 +456,13 @@ class NatNetConnection:
                         residual  = residual,
                     ))
 
+                # Ignore empty rigid bodies: assets Motive publishes but that
+                # have no visible markers (e.g. a drone's asset when the drone
+                # is not in the volume). They cannot become obstacles. Only the
+                # relevant rigid bodies should be enabled in Motive - see README.
+                if not markers:
+                    continue
+
                 body = RigidBody(
                     body_id        = body_id,
                     name           = name,
@@ -570,6 +577,21 @@ class _NatNetSDKInterceptor(_NatNetSDK if _SDK_AVAILABLE else object):
             sock.close()
             return None
         return sock
+
+    # The SDK stops its receive threads by closing their sockets, relying on
+    # the blocked recvfrom() to raise. That works on Windows, but on Linux
+    # close() does not wake a thread blocked in recvfrom(), so join() hangs
+    # forever whenever no packet arrives (e.g. Motive stopped streaming).
+    # shutdown() does wake it (recvfrom returns b"" and the loop sees stop).
+    def shutdown(self):
+        self.stop_threads = True
+        for sock in (self.command_socket, self.data_socket):
+            if sock is not None:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass  # ENOTCONN for UDP - the blocked recvfrom still wakes
+        super().shutdown()
 
     # Multicast frames start arriving as soon as the data socket opens, before
     # Motive has answered NAT_CONNECT. Until then the SDK's NatNet version is

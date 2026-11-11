@@ -38,6 +38,29 @@ Or directly:
 python scripts/run.py
 ```
 
+## Motive setup
+
+Before connecting, check these in Motive:
+
+- **Publish only the relevant rigid bodies.** In the Assets pane, enable
+  streaming only for the rigid bodies that are obstacles for this session
+  (plus `boundary`, if you use one). Every published rigid body with visible
+  markers becomes an obstacle in the export.
+- **Empty rigid bodies are ignored.** A rigid body that is published but has no
+  visible markers (e.g. a drone's asset while the drone is not in the volume)
+  is silently left out. The same applies to a real obstacle whose markers are
+  all occluded at capture time, so if an obstacle is missing, check that
+  Motive can see its markers.
+- **Streaming:** Settings → Streaming → enable NatNet, transmission type
+  **Multicast**.
+- **Up Axis:** leave Settings → Streaming → Up Axis at **Z Axis** (the lab's
+  configuration). The tool expects Z-up from Motive; if this setting is ever
+  changed, obstacles appear rotated 90° relative to the floor (see
+  `DEFAULT_STREAM_UP_AXIS` in `src/obstacle_builder/natnet/client.py`).
+
+The rigid body names in Motive become the obstacle names and STL file names
+(they can be renamed in the tool before export).
+
 ## Coordinate convention
 
 | Property | Value |
