@@ -171,7 +171,47 @@ transparent (octomap_server 2.3.1), so the free space shows only in the
 OccupancyGrid display.
 
 Planners that read `.bt` files (e.g. many drone planners) can load
-the file directly.
+the file directly. `obstacle-builder-ros2` (below) also publishes it, with
+no `octomap_server` needed.
+
+## Use in ROS 2
+
+`obstacle-builder-ros2` publishes a session to ROS 2: the obstacles for
+RViz, as MoveIt collision objects, and its OctoMap.
+
+```bash
+source /opt/ros/humble/setup.bash             # before running, in every terminal
+obstacle-builder-ros2 ~/scenes/session_20261112_103000
+obstacle-builder-ros2 ~/scenes/session_20261112_103000 --live   # follow Motive
+```
+
+| Topic | Type | What |
+|---|---|---|
+| `/obstacle_builder/markers` | `visualization_msgs/MarkerArray` | obstacle hulls with their names, boundary walls, floor outline |
+| `/planning_scene` | `moveit_msgs/PlanningScene` (diff) | each obstacle and wall as a collision object (mesh), for MoveIt's `move_group` |
+| `/obstacle_builder/octomap` | `octomap_msgs/Octomap` | the session's `octomap.bt`, if it was written |
+
+Everything is in the frame given by `--frame-id` (default `map`), which
+must match the OptiTrack origin in your TF tree.
+
+- **Markers and OctoMap are latched** (transient local). In RViz, set
+  the display's Durability Policy to Transient Local. View the OctoMap with
+  the OccupancyGrid display, as described above.
+- **MoveIt** gets the scene again whenever a new subscriber appears, so
+  `move_group` can start before or after this node. The MoveIt output needs
+  `moveit_msgs` (`sudo apt install ros-<distro>-moveit-msgs`); without it,
+  only the MoveIt output is skipped.
+- **`--live`** connects to Motive (`--server-ip`) and moves each obstacle to
+  the live pose of the rigid body with the same name, at up to `--rate` Hz
+  (default 10). Shapes stay as exported. The OctoMap still shows the saved
+  poses.
+
+Options: `--no-walls`, `--no-moveit`, `--no-octomap`. ROS arguments go
+after `--ros-args`, for example `--ros-args -r __ns:=/lab`.
+
+`rclpy` comes from ROS, not from pip. Create the virtual environment with
+the Python of your ROS distribution (3.10 for Humble, 3.12 for Jazzy), and
+source ROS before running.
 
 ## Use in a planner (3D collision checks)
 

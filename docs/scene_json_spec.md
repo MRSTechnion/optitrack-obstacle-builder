@@ -106,23 +106,18 @@ corner cameras) — the same objects the tool works with. The GUI's
 
 ## Consuming scene.json in ROS 2
 
-```python
-import json
-from geometry_msgs.msg import Pose
+`obstacle-builder-ros2 <session>` publishes the session. The README
+lists the topics.
 
-with open("scene.json") as f:
-    scene = json.load(f)
+| scene.json | ROS 2 |
+|---|---|
+| each `models[]` entry | a `TRIANGLE_LIST` marker (ns `obstacles`) and a name label (ns `names`); a `moveit_msgs/CollisionObject` with `id` = `name`, `pose` = `position` + `quaternion`, the STL as its mesh |
+| `boundary.wall_extrusion.stl_files` | markers (ns `walls`) and collision objects `boundary_wall_N`, in the world frame |
+| `boundary.floor_polygon` | a closed `LINE_STRIP` marker (ns `boundary`) |
+| `octomap.bt` next to scene.json | `octomap_msgs/Octomap` (binary) |
 
-for model in scene["models"]:
-    pose = Pose()
-    pose.position.x, pose.position.y, pose.position.z = model["position"]
-    qx, qy, qz, qw = model["quaternion"]
-    pose.orientation.x = qx
-    pose.orientation.y = qy
-    pose.orientation.z = qz
-    pose.orientation.w = qw
-    # spawn model using pose + model["stl"]
-```
+To build your own messages, note that `quaternion` is `[x, y, z, w]`,
+the same order as `geometry_msgs/Quaternion`'s fields.
 
 ## Consuming scene.json in Gazebo
 

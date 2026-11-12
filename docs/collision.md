@@ -131,5 +131,5 @@ bool hit = fcl::collide(&robot, obstacle.get(), req, res) > 0;
 Note the quaternion order: `scene.json` is `[x, y, z, w]`; Eigen's
 constructor takes `(w, x, y, z)`. For many obstacles, register them in an
 `fcl::DynamicAABBTreeCollisionManagerd`. In **MoveIt**, each model becomes a
-`moveit_msgs/CollisionObject` with a mesh (the STL) and the pose — that is
-what the planned ROS 2 adapter will publish.
+`moveit_msgs/CollisionObject` with a mesh (the STL) and the pose;
+`obstacle-builder-ros2` publishes exactly that (see the README).
