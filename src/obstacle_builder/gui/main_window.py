@@ -238,6 +238,11 @@ class MainWindow(QMainWindow):
         self._convention_group = self._build_convention_group()
         self._boundary_group   = self._build_boundary_group()
         layout.addWidget(self._convention_group)
+        # Everything is Z-up (Motive already streams Z-up). The Y-up export
+        # option is hidden, not removed: setVisible(True) brings it back.
+        # Note: the boundary is built assuming Z-up, so re-enabling Y-up
+        # would need build_boundary() to handle it first.
+        self._convention_group.setVisible(False)
         layout.addWidget(self._boundary_group)
 
         # Obstacle table takes remaining space

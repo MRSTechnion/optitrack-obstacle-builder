@@ -59,21 +59,29 @@ def test_boundary_round_trip(exported):
     assert b.room_width_x == pytest.approx(boundary.room_width_x, abs=1e-4)
 
 
-def test_old_sessions_without_floor_polygon_load(exported):
-    session_dir, _, boundary, _ = exported
+def test_boundary_without_floor_polygon_is_rejected(exported):
+    session_dir = exported[0]
     scene_path = session_dir / "scene.json"
     scene = json.loads(scene_path.read_text())
     del scene["boundary"]["floor_polygon"]
-    del scene["boundary"]["mode"]
     scene_path.write_text(json.dumps(scene))
-    b = load_session(session_dir).boundary
-    assert _vertex_set(b.floor_vertices) == _vertex_set(boundary.floor_vertices)
-    assert b.mode == "corners"
-
+    with pytest.raises(ValueError, match="floor_polygon"):
+        load_session(session_dir)
 
 def test_missing_stl_is_reported(exported):
     session_dir, hulls, _, _ = exported
     name = next(iter(hulls))
     (session_dir / "models" / f"{name}.stl").unlink()
     with pytest.raises(FileNotFoundError, match=name):
+        load_session(session_dir)
+
+
+def test_only_z_up_sessions_are_accepted(exported):
+    """Z-up is the standard; every reader goes through load_scene()."""
+    session_dir = exported[0]
+    scene_path = session_dir / "scene.json"
+    scene = json.loads(scene_path.read_text())
+    scene["convention"] = "y_up"
+    scene_path.write_text(json.dumps(scene))
+    with pytest.raises(ValueError, match="z_up"):
         load_session(session_dir)

@@ -32,7 +32,6 @@ from stl import mesh as stl_mesh  # numpy-stl
 from ..geometry.hull import (
     BoundaryResult,
     HullResult,
-    _sort_polygon_ccw,
     _triangulate_polygon,
     export_boundary_stl,
     export_hull_stl,
@@ -271,6 +270,12 @@ def _validate_scene(data: dict) -> None:
             f"scene.json missing required keys: {missing}"
         )
 
+    # Z-up is the standard: every consumer (adapters, collision layer) relies on it
+    if data["convention"] != "z_up":
+        raise ValueError(
+            f"scene.json convention is {data['convention']!r}; only 'z_up' is supported."
+        )
+
     for i, model in enumerate(data.get("models", [])):
         for key in ("name", "stl", "position", "quaternion"):
             if key not in model:
@@ -408,12 +413,9 @@ def _read_stl(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 def _load_boundary(rec: dict, session_dir: Path) -> BoundaryResult:
     """Rebuild a BoundaryResult from a scene.json boundary record."""
-    if "floor_polygon" in rec:
-        floor = np.array(rec["floor_polygon"], dtype=float)
-    else:
-        # Sessions exported before floor_polygon existed: use the floor STL
-        floor, _ = _read_stl(session_dir / rec["stl"])
-        floor = _sort_polygon_ccw(floor)
+    if "floor_polygon" not in rec:
+        raise ValueError("scene.json boundary is missing 'floor_polygon'.")
+    floor = np.array(rec["floor_polygon"], dtype=float)
 
     walls = []
     for stl in (rec.get("wall_extrusion") or {}).get("stl_files", []):

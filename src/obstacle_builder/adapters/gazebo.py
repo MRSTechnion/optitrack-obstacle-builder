@@ -24,7 +24,6 @@ Generic by design (modern Gazebo: Fortress, Garden, Harmonic, …):
   - Boundary: the floor polygon as a visual-only overlay (it is the
     floor, not an obstacle) and, if exported, the walls as solid models.
   - A ground plane at Z = 0 (optional) and a directional light.
-  - Gazebo is Z-up: Y-up sessions are converted.
 
 Gazebo Classic (gazebo11, end-of-life) is not targeted.
 """
@@ -41,7 +40,6 @@ from pathlib import Path
 
 from scipy.spatial.transform import Rotation
 
-from ..geometry.transform import _R_OPTITRACK_TO_WORLD
 from ..scene.scene_writer import load_scene
 
 logger = logging.getLogger(__name__)
@@ -115,8 +113,6 @@ def build_world_xml(
     boundary:     bool = True,
 ) -> str:
     """Return the SDF world as a string (see write_world)."""
-    y_up = scene.get("convention") == "y_up"
-
     def uri(rel_stl: str) -> str:
         # Mesh URI relative to the world file; sdformat resolves it against
         # the world file's directory, so the world works from any cwd.
@@ -134,7 +130,7 @@ def build_world_xml(
     used: set[str] = {"ground_plane", "sun"}
     for i, model in enumerate(scene["models"]):
         name = _unique(_sdf_name(model["name"]), used)
-        xyz, rpy = _pose(model["position"], model["quaternion"], y_up)
+        xyz, rpy = _pose(model["position"], model["quaternion"])
         rgb = _PALETTE[i % len(_PALETTE)]
         _add_static_mesh_model(
             world, name, xyz, rpy, uri(model["stl"]),
@@ -143,12 +139,9 @@ def build_world_xml(
 
     rec = scene.get("boundary")
     if boundary and rec:
+        # Boundary meshes are already in world coordinates: identity pose
         identity = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
         lifted   = ((0.0, 0.0, _FLOOR_LIFT_M), (0.0, 0.0, 0.0))
-        if y_up:
-            # Boundary meshes are stored in world (Y-up) coordinates
-            identity = ((0.0, 0.0, 0.0), _y_up_rpy())
-            lifted   = ((0.0, 0.0, _FLOOR_LIFT_M), _y_up_rpy())
         _add_static_mesh_model(
             world, _unique("boundary_floor", used), *lifted, uri(rec["stl"]),
             rgba=_BOUNDARY_RGBA, collision=False,
@@ -228,21 +221,13 @@ def _comment(parent, text):
 # Poses and names
 # ---------------------------------------------------------------------------
 
-def _pose(position, quaternion, y_up: bool):
+def _pose(position, quaternion):
     """
     scene.json pose → SDF (x y z, roll pitch yaw). SDF's RPY is fixed-axis
-    X-Y-Z (= scipy extrinsic "xyz"). Y-up poses are rotated into Z-up.
+    X-Y-Z (= scipy extrinsic "xyz").
     """
     rot = Rotation.from_quat(quaternion)   # scalar-last, like scene.json
-    pos = list(position)
-    if y_up:
-        pos = list(_R_OPTITRACK_TO_WORLD.apply(pos))
-        rot = _R_OPTITRACK_TO_WORLD * rot
-    return pos, tuple(rot.as_euler("xyz"))
-
-
-def _y_up_rpy():
-    return tuple(_R_OPTITRACK_TO_WORLD.as_euler("xyz"))
+    return list(position), tuple(rot.as_euler("xyz"))
 
 
 def _fmt(*values) -> str:

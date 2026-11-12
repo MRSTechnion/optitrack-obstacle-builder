@@ -143,7 +143,7 @@ drone and a ground robot (`pip install -e ".[ompl]"`, Linux / macOS).
 
 | Property | Value |
 |---|---|
-| Default up axis | Z (switchable to Y in GUI) |
+| Up axis | Z |
 | World origin | OptiTrack origin |
 | Units | metres |
 | Quaternion format | scalar-last `[qx, qy, qz, qw]` |

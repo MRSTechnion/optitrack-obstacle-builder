@@ -6,15 +6,16 @@ consumer (Gazebo, ROS 2, Unity, custom scripts).
 
 ## Coordinate convention
 
-| Property | Default | Optional |
-|---|---|---|
-| Up axis | Z | Y (selectable in GUI) |
-| World origin | OptiTrack origin | — |
-| Units | metres | — |
-| Quaternion order | scalar-last `[qx, qy, qz, qw]` | — |
-| Axis mapping | OptiTrack X→X, OptiTrack Z→Y, OptiTrack Y→Z | — |
+| Property | Value |
+|---|---|
+| Up axis | Z |
+| World origin | OptiTrack origin |
+| Units | metres |
+| Quaternion order | scalar-last `[qx, qy, qz, qw]` |
 
-The `convention` field in the file tells consumers which mode was used.
+This is the frame Motive uses with *Streaming → Up Axis = Z*. All positions,
+orientations and meshes in a session use it. The
+`convention` field is always `"z_up"`; readers reject anything else.
 
 ## Schema
 
@@ -134,7 +135,6 @@ session folder stays self-contained. `gz sim <session>/world.sdf` runs it.
 | each `models[]` entry | a static `<model>` named after it (sanitised to letters, digits, `_`, `-`; made unique), its STL as both `<visual>` and `<collision>` mesh, `<pose>` = `position` + `quaternion` as fixed-axis roll-pitch-yaw |
 | `boundary.stl` | `boundary_floor`: visual only (semi-transparent, 1 mm above the ground) — the floor is not an obstacle |
 | `boundary.wall_extrusion.stl_files` | `boundary_wall_N`: solid static models |
-| `convention: "y_up"` | poses (and the boundary) rotated into Gazebo's Z-up |
 
 Also added: a ground plane at Z = 0 and a directional light. The world has no
 `<plugin>` elements, so Gazebo loads its default systems; it is SDF 1.8, for

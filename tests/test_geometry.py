@@ -386,7 +386,7 @@ class TestSceneWriter:
         with open(json_path) as f:
             data = json.load(f)
 
-        assert data["convention"] in ("z_up", "y_up")
+        assert data["convention"] == "z_up"
         assert data["units"] == "metres"
         assert isinstance(data["models"], list)
 
@@ -459,7 +459,10 @@ class TestSceneWriter:
             assert len(model["quaternion"]) == 4
 
     def test_yup_convention_recorded(self, hulls, world_frame, tmp_path):
-        """Y-up mode is recorded correctly in scene.json."""
+        """
+        The (hidden) Y-up mode is recorded in scene.json — and readers reject
+        it, since Z-up is the standard.
+        """
         session = build_session(
             hulls        = hulls,
             boundary     = None,
@@ -467,5 +470,7 @@ class TestSceneWriter:
             z_up         = False,
         )
         session_dir = export_session(session, tmp_path)
-        scene       = load_scene(session_dir / "scene.json")
-        assert scene["convention"] == "y_up"
+        raw = json.loads((session_dir / "scene.json").read_text())
+        assert raw["convention"] == "y_up"
+        with pytest.raises(ValueError, match="z_up"):
+            load_scene(session_dir / "scene.json")

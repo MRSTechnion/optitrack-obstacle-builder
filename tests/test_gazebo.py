@@ -90,19 +90,6 @@ def test_obstacles_land_where_scene_json_puts_them(session_dir):
         np.testing.assert_allclose(rot.apply(verts) + xyz, expected, atol=1e-5)
 
 
-def test_y_up_session_is_converted_to_z_up(tmp_path):
-    """Same scene exported Y-up must give the same Gazebo (Z-up) placement."""
-    z_dir = _export(tmp_path / "z", z_up=True)
-    y_dir = _export(tmp_path / "y", z_up=False)
-    z_models = _models(gazebo.write_world(z_dir))
-    y_models = _models(gazebo.write_world(y_dir))
-    loaded = load_session(z_dir)
-    for name, hull in loaded.hulls.items():
-        zx, zr = _pose(z_models[name])
-        yx, yr = _pose(y_models[name])
-        np.testing.assert_allclose(yr.apply(hull.vertices) + yx, zr.apply(hull.vertices) + zx, atol=1e-5)
-
-
 def test_boundary_floor_is_visual_only_and_walls_are_solid(session_dir):
     models = _models(gazebo.write_world(session_dir))
     floor = models["boundary_floor"]

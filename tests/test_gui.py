@@ -103,3 +103,15 @@ def test_export_optionally_writes_gazebo_world(win, tmp_path, monkeypatch, with_
     session_dir = next(tmp_path.glob("session_*"))
     assert (session_dir / "scene.json").exists()
     assert (session_dir / "world.sdf").exists() == with_gazebo
+
+
+def test_axis_option_hidden_and_z_up(win, tmp_path, monkeypatch):
+    assert win._convention_group.isHidden()          # isVisible() is False for any unshown window
+    assert win._radio_zup.isChecked()
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *a, **k: None)
+    win._act_mock.trigger()
+    win._on_export()
+    import json
+    scene = json.loads(next(tmp_path.glob("session_*/scene.json")).read_text())
+    assert scene["convention"] == "z_up"
