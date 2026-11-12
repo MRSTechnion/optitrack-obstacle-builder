@@ -1,5 +1,7 @@
 # OptiTrack Obstacle Builder
 
+[![CI](https://github.com/ayalon-mrslab/optitrack-obstacle-builder/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/ayalon-mrslab/optitrack-obstacle-builder/actions/workflows/ci.yml)
+
 Reads rigid bodies from an OptiTrack/Motive system via NatNet 4.x, reconstructs
 3D geometry from marker positions, and exports STL models + a `scene.json` pose
 file for use in Gazebo, ROS 2, Unity, or any other simulator.
@@ -13,7 +15,7 @@ file for use in Gazebo, ROS 2, Unity, or any other simulator.
 ## Setup
 
 ```bash
-git clone https://github.com/<your-lab>/optitrack-obstacle-builder
+git clone https://github.com/ayalon-mrslab/optitrack-obstacle-builder
 cd optitrack-obstacle-builder
 python -m venv .venv
 
