@@ -115,3 +115,12 @@ def test_axis_option_hidden_and_z_up(win, tmp_path, monkeypatch):
     import json
     scene = json.loads(next(tmp_path.glob("session_*/scene.json")).read_text())
     assert scene["convention"] == "z_up"
+
+
+def test_export_optionally_writes_octomap(win, tmp_path, monkeypatch):
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *a, **k: None)
+    win._act_mock.trigger()
+    win._chk_octomap.setChecked(True)
+    win._on_export()
+    assert (next(tmp_path.glob("session_*")) / "octomap.bt").exists()

@@ -17,6 +17,7 @@ dependencies = [
     "numpy-stl>=3.0",
     "platformdirs>=4.0",
     "python-fcl>=0.7",
+    "octomap-python>=1.10",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +28,7 @@ dev = ["pytest>=7", "ruff==0.17.4"]
 [project.scripts]
 obstacle-builder = "obstacle_builder.gui.main_window:main"
 obstacle-builder-gazebo = "obstacle_builder.adapters.gazebo:main"
+obstacle-builder-octomap = "obstacle_builder.adapters.octomap:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

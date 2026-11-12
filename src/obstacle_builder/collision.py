@@ -122,6 +122,7 @@ class CollisionWorld:
         self._floor_xy: np.ndarray | None = None    # boundary polygon, CCW
         self._ceiling: float | None = None
         self._extent: tuple[np.ndarray, np.ndarray] | None = None   # of convex solids
+        self._extents: list[tuple[np.ndarray, np.ndarray]] = []     # per convex solid
 
     # -- construction -------------------------------------------------------
 
@@ -179,6 +180,7 @@ class CollisionWorld:
         rot = Rotation.identity() if orientation is None else Rotation.from_quat(orientation)
         world_verts = rot.apply(verts) + np.asarray(position, dtype=float)
         lo, hi = world_verts.min(axis=0), world_verts.max(axis=0)
+        self._extents.append((lo, hi))
         if self._extent is not None:
             lo, hi = np.minimum(lo, self._extent[0]), np.maximum(hi, self._extent[1])
         self._extent = (lo, hi)
@@ -186,6 +188,10 @@ class CollisionWorld:
     def add_object(self, name, geometry, position=(0, 0, 0), orientation=None) -> None:
         """Add any FCL geometry (advanced use)."""
         self._objects.append((name, fcl.CollisionObject(geometry, _transform(position, orientation))))
+
+    def object_extents(self) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Axis-aligned (lo, hi) world extent of each convex solid (not the floor)."""
+        return list(self._extents)
 
     @property
     def names(self) -> list[str]:
@@ -257,15 +263,27 @@ class CollisionWorld:
         True if the point is above the boundary floor polygon, between the
         floor (Z = 0) and the ceiling. True everywhere if there is no boundary.
         """
+        return bool(self.in_bounds_many(np.asarray(point, dtype=float)[None, :])[0])
+
+    def in_bounds_many(self, points) -> np.ndarray:
+        """Vectorised in_bounds() for an (N, 3) array; returns (N,) booleans."""
+        pts = np.asarray(points, dtype=float)
         if self._floor_xy is None:
-            return True
-        x, y, z = (float(v) for v in point)
-        if z < 0.0 or (self._ceiling is not None and z > self._ceiling):
-            return False
+            return np.ones(len(pts), dtype=bool)
+        ok = pts[:, 2] >= 0.0
+        if self._ceiling is not None:
+            ok &= pts[:, 2] <= self._ceiling
         poly = self._floor_xy
-        edges = np.roll(poly, -1, axis=0) - poly
-        cross = edges[:, 0] * (y - poly[:, 1]) - edges[:, 1] * (x - poly[:, 0])
-        return bool(np.all(cross >= -1e-9))    # convex, CCW: left of every edge
+        edges = np.roll(poly, -1, axis=0) - poly                # (E, 2)
+        inside = np.empty(len(pts), dtype=bool)
+        chunk = 100_000                                         # bounds memory: chunk x E temporaries
+        for i in range(0, len(pts), chunk):
+            p = pts[i:i + chunk]
+            dx = p[:, None, 0] - poly[None, :, 0]               # (n, E)
+            dy = p[:, None, 1] - poly[None, :, 1]
+            cross = edges[None, :, 0] * dy - edges[None, :, 1] * dx
+            inside[i:i + chunk] = np.all(cross >= -1e-9, axis=1)   # convex, CCW: left of every edge
+        return ok & inside
 
     def bounds(self, margin: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
         """

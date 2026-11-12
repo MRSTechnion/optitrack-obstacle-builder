@@ -52,6 +52,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ..adapters import gazebo
+from ..adapters import octomap as octomap_adapter
 from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary
 from ..geometry.transform import convert_frame
 from ..natnet.client import MockNatNetConnection, NatNetConnection
@@ -357,6 +358,13 @@ class MainWindow(QMainWindow):
             "Same as running obstacle-builder-gazebo on the session afterwards."
         )
         layout.addWidget(self._chk_gazebo)
+
+        self._chk_octomap = QCheckBox("Also write OctoMap")
+        self._chk_octomap.setToolTip(
+            "Write octomap.bt (5 cm 3D occupancy map) into the session folder.\n"
+            "Same as running obstacle-builder-octomap on the session afterwards."
+        )
+        layout.addWidget(self._chk_octomap)
 
         self._btn_export = QPushButton("Export scene")
         self._btn_export.setFixedHeight(36)
@@ -816,6 +824,8 @@ class MainWindow(QMainWindow):
             session_dir = export_session(session, output_path)
             if self._chk_gazebo.isChecked():
                 gazebo.write_world(session_dir)
+            if self._chk_octomap.isChecked():
+                octomap_adapter.write_octomap(session_dir)
 
             self._export_status.setText(f"Saved to:\n{session_dir.name}")
             self._set_status(f"Exported → {session_dir}")

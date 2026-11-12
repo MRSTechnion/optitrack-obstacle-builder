@@ -122,6 +122,57 @@ Options: `-o FILE` (write elsewhere), `--name` (world name),
 `--no-ground-plane`, `--no-boundary`. Works with modern Gazebo (Fortress,
 Garden, Harmonic, …). From Python: `obstacle_builder.adapters.gazebo.write_world()`.
 
+## Use as an OctoMap (3D occupancy map)
+
+OctoMap is the standard 3D map for robots that plan in 3D — drones in
+particular. Turn a session into one:
+
+```bash
+obstacle-builder-octomap ~/scenes/session_20261112_103000      # → octomap.bt
+```
+
+Or tick **Also write OctoMap** in the Export panel. The map is written into
+the session folder, in the session's frame (Z-up, metres, OptiTrack origin),
+with 5 cm voxels (`-r` to change). Each voxel is:
+
+| State | Where |
+|---|---|
+| occupied | overlaps an obstacle or an exported wall (partly covered voxels count, so obstacles are never thinner than they are), and one voxel layer under the floor |
+| free | the rest of the room, inside the boundary from floor to ceiling |
+| unknown | everything else |
+
+Options: `--no-floor`, `--no-free-space` (leave the room unknown),
+`--no-walls`, `-o FILE`. From Python: `obstacle_builder.adapters.octomap.write_octomap()`.
+
+Serve it in ROS 2 with `octomap_server` (topics `octomap_binary`,
+`octomap_full`, `occupied_cells_vis_array` for RViz, …):
+
+```bash
+ros2 run octomap_server octomap_server_node --ros-args \
+    -p octomap_path:=$HOME/scenes/session_20261112_103000/octomap.bt \
+    -p frame_id:=map
+```
+
+`frame_id` must name the TF frame that matches the OptiTrack origin in your
+setup.
+
+To view it in RViz, add the **OccupancyGrid** display from
+`octomap_rviz_plugins` (`sudo apt install ros-<distro>-octomap-rviz-plugins`)
+and set:
+
+- Topic `/octomap_full`, Durability Policy **Transient Local**. The map is
+  published once, so a Volatile subscriber never receives it.
+- **Voxel Rendering**: Occupied, Free or All Voxels. Voxel Coloring Z-Axis
+  makes the height easier to read.
+
+Use OccupancyGrid, not OccupancyMap: OccupancyMap shows a flattened 2D
+projection. The server's `free_cells_vis_array` markers are fully
+transparent (octomap_server 2.3.1), so the free space shows only in the
+OccupancyGrid display.
+
+Planners that read `.bt` files (e.g. many drone planners) can load
+the file directly.
+
 ## Use in a planner (3D collision checks)
 
 ```python
@@ -167,7 +218,8 @@ Each export creates a session folder inside the directory you choose:
     │   ├── <obstacle>.stl      one per obstacle: convex hull, body-local frame
     │   ├── boundary.stl        floor polygon of the room boundary
     │   └── boundary_wall_N.stl wall panels (only with "Generate walls")
-    └── world.sdf               Gazebo world (only with "Also write Gazebo world")
+    ├── world.sdf               Gazebo world (only with "Also write Gazebo world")
+    └── octomap.bt              3D occupancy map (only with "Also write OctoMap")
 ```
 
 The STLs are centred on each body's origin; `scene.json` places them in the

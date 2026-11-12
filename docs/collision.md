@@ -71,6 +71,12 @@ the hulls pass through the **marker centres**, so they are slightly smaller
 than the real objects. Inflate the robot by a margin when planning (e.g.
 `Sphere(radius + 0.05)`), or require `world.distance(...) >= margin`.
 
+## Planners that want a map instead
+
+Some planners — many drone planners in particular — take a 3D occupancy map
+rather than calling a collision checker. `obstacle-builder-octomap` writes
+the session as an OctoMap (`octomap.bt`); see the README.
+
 ## Example: planning with OMPL
 
 [`examples/ompl_planning.py`](../examples/ompl_planning.py) is a complete,
