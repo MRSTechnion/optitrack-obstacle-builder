@@ -189,14 +189,21 @@ def test_default_client_ip_is_auto():
 
 
 def test_multicast_data_socket_binds_to_all_interfaces():
-    """On Linux a socket bound to a unicast IP never sees multicast datagrams."""
+    """
+    On Linux/macOS a socket bound to a unicast IP never sees multicast
+    datagrams, so we bind to all interfaces. On Windows the SDK's own socket
+    (bound to the local IP) works and is kept.
+    """
+    import sys
+
     sdk = client_mod._NatNetSDKInterceptor(_FakeOwner())
     sdk.use_multicast = True
     sdk.local_ip_address = "127.0.0.1"
     sock = sdk._NatNetClient__create_data_socket(0)
     try:
         assert sock is not None
-        assert sock.getsockname()[0] == "0.0.0.0"
+        expected = "127.0.0.1" if sys.platform == "win32" else "0.0.0.0"
+        assert sock.getsockname()[0] == expected
     finally:
         sock.close()
 
