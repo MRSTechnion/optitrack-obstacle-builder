@@ -131,6 +131,7 @@ def export_session(
         boundary_record = {
             "stl":          f"models/{boundary_paths[0].name}",
             "type":         "boundary",
+            "mode":         {"all": "all_cameras"}.get(b.mode, b.mode),
             "position":     [0.0, 0.0, 0.0],
             "quaternion":   [0.0, 0.0, 0.0, 1.0],
             "room_dimensions": {
@@ -147,6 +148,9 @@ def export_session(
                 }
                 if session.wall_height else None
             ),
+            "floor_polygon": [
+                _fmt_vec(tuple(v)) for v in b.floor_vertices
+            ],
             "corner_camera_positions": [
                 _fmt_vec(c.position.as_tuple())
                 for c in b.corner_cameras

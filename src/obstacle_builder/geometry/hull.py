@@ -84,14 +84,16 @@ class BoundaryResult:
     """
     The room boundary geometry.
 
-    floor_vertices : np.ndarray shape (4, 3) — the 4 corner points at Z=0
-    floor_faces    : np.ndarray shape (M, 3) — triangles for the floor polygon
+    floor_vertices : np.ndarray shape (N, 3) — floor polygon at Z=0, CCW from
+                     above (N = 4 in "corners" mode)
+    floor_faces    : np.ndarray shape (N-2, 3) — triangles for the floor polygon
     wall_meshes    : list of (vertices, faces) per wall panel, or empty list
                      if wall extrusion was not requested
-    corner_cameras : list of CameraInfo — the 4 cameras used as corners
-    room_width_x   : float — room width along X axis in metres
-    room_depth_y   : float — room depth along Y axis in metres
-    room_height_z  : float — mean camera height (ceiling height) in metres
+    corner_cameras : list of CameraInfo — the cameras at the polygon vertices
+    room_width_x   : float — room width in metres (see build_boundary)
+    room_depth_y   : float — room depth in metres (see build_boundary)
+    room_height_z  : float — mean height of corner_cameras (ceiling) in metres
+    mode           : "corners", "all" or "rigid_body" — how it was built
     """
     floor_vertices:  np.ndarray
     floor_faces:     np.ndarray
@@ -100,6 +102,15 @@ class BoundaryResult:
     room_width_x:    float
     room_depth_y:    float
     room_height_z:   float
+    mode:            str = "corners"
+
+
+# How the floor polygon is built from the cameras (see build_boundary)
+BOUNDARY_MODES = ("corners", "all", "rigid_body")
+
+# Name of the rigid body that marks an interest area ("rigid_body" mode).
+# Matched case-insensitively; never treated as an obstacle.
+BOUNDARY_BODY_NAME = "boundary"
 
 
 # ---------------------------------------------------------------------------
@@ -210,58 +221,108 @@ def build_boundary(
     cameras:         list[CameraInfo],
     wall_height_m:   float | None = None,
     wall_extrude_in: bool = False,
+    mode:            str = "corners",
+    boundary_body:   RigidBody | None = None,
 ) -> BoundaryResult | None:
     """
-    Build the room boundary from camera positions.
+    Build the room boundary (floor polygon at Z=0) from camera positions.
 
-    Automatically detects the 4 corner cameras (the largest bounding rectangle
-    when projected onto the floor plane).
+    Modes
+    -----
+    "corners" (default): a 4-sided floor from the 4 cameras enclosing the
+        largest area — the physical corners of a rectangular truss, in any
+        orientation. room_width_x / room_depth_y are the rectangle's side
+        lengths. Needs >= 4 cameras.
+    "all": an N-sided floor — the convex hull (outline) of all cameras.
+        Makes no assumption about the room's shape (circular rig, fewer
+        cameras, irregular layout). room_width_x / room_depth_y are the
+        polygon's extents along X and Y. Needs >= 3 non-collinear cameras.
+    "rigid_body": an interest area marked by a rigid body named "boundary"
+        (BOUNDARY_BODY_NAME) with markers on the floor at its corners: the
+        floor is the outline of those markers (4 markers → quadrilateral,
+        more → polygon). Cameras only set room_height_z (their mean height,
+        or 0 if there are none). Needs boundary_body with >= 3 visible,
+        non-collinear markers.
 
     Parameters
     ----------
     cameras         : list of CameraInfo in world (Z-up) frame
     wall_height_m   : if not None, generate thin wall panels extruded from
-                      the floor boundary up to this height
+                      the floor boundary up to this height (one per edge)
     wall_extrude_in : True  → extrude inward (toward room centre)
                       False → extrude outward (toward physical walls) [default]
+    mode            : "corners", "all" or "rigid_body"
+    boundary_body   : the "boundary" rigid body (world frame), for
+                      mode="rigid_body"; ignored otherwise
 
-    Returns None if fewer than 4 cameras are available.
+    Returns None if there are too few cameras / markers for the chosen mode.
     """
+    if mode not in BOUNDARY_MODES:
+        raise ValueError(f"mode must be one of {BOUNDARY_MODES}, got {mode!r}")
 
-    if len(cameras) < 4:
-        logger.warning(
-            f"Only {len(cameras)} cameras available — need at least 4 for boundary."
-        )
-        return None
+    if mode == "rigid_body":
+        if boundary_body is None:
+            logger.warning(
+                f"No '{BOUNDARY_BODY_NAME}' rigid body in the frame — publish it "
+                "in Motive to use it as the interest area."
+            )
+            return None
+        marker_xy = np.array([[m.position.x, m.position.y] for m in boundary_body.markers])
+        idx = _outline_indices(marker_xy) if len(marker_xy) >= 3 else None
+        if idx is None:
+            logger.warning(
+                f"'{boundary_body.name}' needs at least 3 visible, non-collinear "
+                f"markers (has {len(marker_xy)})."
+            )
+            return None
+        corners = []   # not camera-based
+        floor_pts = np.array([[*marker_xy[i], 0.0] for i in idx])
+    else:
+        min_cameras = 4 if mode == "corners" else 3
+        if len(cameras) < min_cameras:
+            logger.warning(
+                f"Only {len(cameras)} cameras available — need at least "
+                f"{min_cameras} for the '{mode}' boundary."
+            )
+            return None
 
-    # Find 4 corner cameras
-    corners = _find_corner_cameras(cameras)
-    for cam in corners:
-        cam.is_corner = True
+        if mode == "corners":
+            corners = _find_corner_cameras(cameras)
+            for cam in corners:
+                cam.is_corner = True
+        else:
+            corners = _outline_cameras(cameras)
+            if corners is None:
+                logger.warning("Cameras are collinear — cannot build a floor polygon.")
+                return None
 
-    # Floor projection: use X, Y (Z-up frame). Z=0 is the floor.
-    floor_pts = np.array([
-        [c.position.x, c.position.y, 0.0]
-        for c in corners
-    ])
+        # Floor projection: use X, Y (Z-up frame). Z=0 is the floor.
+        floor_pts = np.array([
+            [c.position.x, c.position.y, 0.0]
+            for c in corners
+        ])
 
-    # Sort corners into consistent winding order (counter-clockwise from above)
-    floor_pts = _sort_rectangle_ccw(floor_pts)
+    # Sort into consistent winding order (counter-clockwise from above)
+    floor_pts = _sort_polygon_ccw(floor_pts)
 
     # Triangulate the floor polygon (simple fan from first vertex)
     floor_faces = _triangulate_polygon(len(floor_pts))
 
-    # Room dimensions
-    xs = floor_pts[:, 0]
-    ys = floor_pts[:, 1]
-    zs = [c.position.z for c in corners]
+    if mode == "corners":
+        room_width_x, room_depth_y = _rectangle_dimensions(floor_pts)
+    else:
+        extent = floor_pts[:, :2].max(axis=0) - floor_pts[:, :2].min(axis=0)
+        room_width_x, room_depth_y = float(extent[0]), float(extent[1])
+    height_cams   = corners if corners else cameras
+    room_height_z = float(np.mean([c.position.z for c in height_cams])) if height_cams else 0.0
 
-    room_width_x  = float(xs.max() - xs.min())
-    room_depth_y  = float(ys.max() - ys.min())
-    room_height_z = float(np.mean(zs))
-
+    shape = {
+        "corners":    "rectangle",
+        "all":        f"{len(floor_pts)}-sided polygon",
+        "rigid_body": f"interest area, {len(floor_pts)} sides",
+    }[mode]
     logger.info(
-        f"Boundary: {room_width_x:.2f} m × {room_depth_y:.2f} m, "
+        f"Boundary ({shape}): {room_width_x:.2f} m × {room_depth_y:.2f} m, "
         f"ceiling height {room_height_z:.2f} m"
     )
 
@@ -285,7 +346,23 @@ def build_boundary(
         room_width_x   = room_width_x,
         room_depth_y   = room_depth_y,
         room_height_z  = room_height_z,
+        mode           = mode,
     )
+
+
+def _rectangle_dimensions(floor_pts: np.ndarray) -> tuple[float, float]:
+    """
+    (width, depth) of a 4-corner floor, measured along its own sides (correct
+    even if the truss is rotated relative to Motive's axes): width is the
+    mean length of the two sides closer to the X axis, depth of the other two.
+    """
+    edges   = np.roll(floor_pts[:, :2], -1, axis=0) - floor_pts[:, :2]
+    lengths = np.linalg.norm(edges, axis=1)
+    x_like  = np.abs(edges[:, 0]) >= np.abs(edges[:, 1])
+    if x_like.sum() == 2:
+        return float(lengths[x_like].mean()), float(lengths[~x_like].mean())
+    # rotated ~45 deg: no clear X/Y sides, use opposite-side pairs
+    return float((lengths[0] + lengths[2]) / 2), float((lengths[1] + lengths[3]) / 2)
 
 
 # ---------------------------------------------------------------------------
@@ -421,10 +498,11 @@ def _find_corner_cameras(cameras: list[CameraInfo]) -> list[CameraInfo]:
     """
     Find the 4 cameras that form the corners of the capture volume.
 
-    Strategy: project all cameras onto the floor plane (X, Y), then find
-    the 4 extreme points — min-X, max-X, min-Y, max-Y combinations —
-    that define the bounding rectangle. For a rectangular truss layout
-    (like the lab setup) these will be the 4 physical corners.
+    Strategy: project all cameras onto the floor plane (X, Y) and pick the
+    4 cameras that enclose the largest area. For a rectangular truss these
+    are the physical corners, whether or not the truss is aligned with
+    Motive's axes. (Taking min/max X and Y instead picks whichever side
+    camera sticks out furthest - usually a mid-side camera, not a corner.)
 
     If cameras are already flagged is_corner=True (e.g. from fixture data),
     those are returned directly.
@@ -434,59 +512,66 @@ def _find_corner_cameras(cameras: list[CameraInfo]) -> list[CameraInfo]:
     if len(pre_flagged) == 4:
         return pre_flagged
 
-    # Project to floor plane
     floor_positions = np.array([
         [c.position.x, c.position.y]
         for c in cameras
     ])
-
-    # Find indices of the 4 extreme cameras
-    min_x_idx = int(np.argmin(floor_positions[:, 0]))
-    max_x_idx = int(np.argmax(floor_positions[:, 0]))
-    min_y_idx = int(np.argmin(floor_positions[:, 1]))
-    max_y_idx = int(np.argmax(floor_positions[:, 1]))
-
-    corner_indices = list({min_x_idx, max_x_idx, min_y_idx, max_y_idx})
-
-    if len(corner_indices) < 4:
-        # Fallback: take the 4 cameras with the largest convex hull area
-        corner_indices = _four_largest_hull_cameras(floor_positions)
-
-    return [cameras[i] for i in corner_indices]
+    return [cameras[i] for i in _four_largest_hull_cameras(floor_positions)]
 
 
 def _four_largest_hull_cameras(
     floor_positions: np.ndarray,
 ) -> list[int]:
     """
-    Fallback corner detection: find the 4-camera subset that maximises
-    the area of the bounding quadrilateral. Used when the simple
-    min/max approach doesn't yield 4 unique cameras.
+    Return the indices of the 4 points enclosing the largest quadrilateral.
+
+    The optimal 4 always lie on the convex hull of all points, so only hull
+    vertices are searched (a handful, even with many cameras).
     """
     from itertools import combinations
 
-    n = len(floor_positions)
-    best_area  = -1.0
-    best_combo = list(range(4))
+    try:
+        candidates = list(ConvexHull(floor_positions).vertices)
+    except QhullError:
+        candidates = list(range(len(floor_positions)))  # degenerate layout
+    if len(candidates) < 4:
+        candidates = list(range(len(floor_positions)))
 
-    for combo in combinations(range(n), 4):
-        pts = floor_positions[list(combo)]
-        # Area of quadrilateral via convex hull
+    best_area  = -1.0
+    best_combo = candidates[:4]
+    for combo in combinations(candidates, 4):
         try:
-            h = ConvexHull(pts)
+            h = ConvexHull(floor_positions[list(combo)])
         except QhullError:
             continue  # degenerate quad (collinear/duplicate cameras) - skip it
         if h.volume > best_area:   # ConvexHull.volume = area in 2D
             best_area  = h.volume
             best_combo = list(combo)
 
-    return best_combo
+    return [int(i) for i in best_combo]
 
 
-def _sort_rectangle_ccw(pts: np.ndarray) -> np.ndarray:
+def _outline_indices(xy: np.ndarray) -> list[int] | None:
+    """Indices of the 2D points on their convex hull; None if collinear."""
+    try:
+        return [int(i) for i in ConvexHull(xy).vertices]
+    except QhullError:
+        return None
+
+
+def _outline_cameras(cameras: list[CameraInfo]) -> list[CameraInfo] | None:
     """
-    Sort 4 floor points into counter-clockwise winding order
-    (when viewed from above, i.e. from +Z).
+    Cameras on the convex hull (outline) of the floor projection, i.e. the
+    vertices of the "all cameras" floor polygon. None if they are collinear.
+    """
+    idx = _outline_indices(np.array([[c.position.x, c.position.y] for c in cameras]))
+    return None if idx is None else [cameras[i] for i in idx]
+
+
+def _sort_polygon_ccw(pts: np.ndarray) -> np.ndarray:
+    """
+    Sort the vertices of a convex floor polygon into counter-clockwise
+    winding order (when viewed from above, i.e. from +Z).
     Uses the centroid angle approach.
     """
     centroid = pts[:, :2].mean(axis=0)

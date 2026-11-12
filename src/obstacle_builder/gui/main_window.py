@@ -51,7 +51,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..geometry.hull import build_all_hulls, build_boundary
+from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary
 from ..geometry.transform import convert_frame
 from ..natnet.client import MockNatNetConnection, NatNetConnection
 from ..natnet.types import Frame
@@ -274,10 +274,21 @@ class MainWindow(QMainWindow):
         source_row = QHBoxLayout()
         source_row.addWidget(QLabel("Source:"))
         self._boundary_source = QComboBox()
-        self._boundary_source.addItems([
-            "4 corner cameras (auto)",
-            "All cameras (convex hull)",
-        ])
+        self._boundary_source.addItem("4 corner cameras (rectangle)", "corners")
+        self._boundary_source.addItem("All cameras (polygon)", "all")
+        self._boundary_source.addItem(
+            f"'{BOUNDARY_BODY_NAME}' rigid body (interest area)", "rigid_body"
+        )
+        self._boundary_source.setToolTip(
+            "4 corner cameras: rectangular room - floor spans the 4 corner cameras.\n"
+            "All cameras: any layout (circular rig, fewer cameras) - floor is the\n"
+            "outline of all cameras, with one edge (and wall) per outline segment.\n"
+            f"'{BOUNDARY_BODY_NAME}' rigid body: an interest area marked in Motive by a\n"
+            "rigid body with that name and markers on the floor at its corners."
+        )
+        self._boundary_source.currentIndexChanged.connect(
+            lambda _i: self._rebuild_geometry()
+        )
         source_row.addWidget(self._boundary_source)
         layout.addLayout(source_row)
 
@@ -518,11 +529,15 @@ class MainWindow(QMainWindow):
         if self._world_frame is None:
             return
 
-        # Filter out the boundary rigid body if present
-        # (named "boundary" by convention — see marker_placement_guide.md)
+        # The "boundary" rigid body marks an interest area, never an obstacle
+        # (see marker_placement_guide.md).
+        boundary_body = next(
+            (b for b in self._world_frame.rigid_bodies
+             if b.name.lower() == BOUNDARY_BODY_NAME),
+            None,
+        )
         obstacle_bodies = [
-            b for b in self._world_frame.rigid_bodies
-            if b.name.lower() != "boundary"
+            b for b in self._world_frame.rigid_bodies if b is not boundary_body
         ]
 
         self._hulls = build_all_hulls(obstacle_bodies)
@@ -541,6 +556,8 @@ class MainWindow(QMainWindow):
             self._world_frame.cameras,
             wall_height_m   = wall_height,
             wall_extrude_in = wall_in,
+            mode            = self._boundary_source.currentData(),
+            boundary_body   = boundary_body,
         )
 
         # Update child widgets
@@ -553,6 +570,7 @@ class MainWindow(QMainWindow):
             self._boundary,
             show_boundary = self._chk_show_boundary.isChecked(),
             bodies        = self._world_frame.rigid_bodies if self._world_frame else None,
+            cameras       = self._world_frame.cameras if self._world_frame else None,
         )
 
         self.geometry_updated.emit()

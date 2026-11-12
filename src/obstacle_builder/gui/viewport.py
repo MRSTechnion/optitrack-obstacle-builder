@@ -108,6 +108,10 @@ class Viewport3D(QOpenGLWidget):
         # Colour assignment — stable across updates
         self._colour_map: dict[str, tuple] = {}
 
+        # All camera positions (world frame) — drawn as small dim dots; the
+        # ones at the boundary polygon's vertices are drawn brighter on top.
+        self._cameras: list = []
+
         # Camera / navigation state
         self._azimuth   =  45.0    # degrees, rotation around Z
         self._elevation =  30.0    # degrees, tilt up from horizontal
@@ -131,11 +135,15 @@ class Viewport3D(QOpenGLWidget):
         boundary:      BoundaryResult | None,
         show_boundary: bool = True,
         bodies:        list | None = None,   # list[RigidBody] — for world poses
+        cameras:       list | None = None,   # list[CameraInfo] — all cameras
     ):
         """Replace the current scene data and redraw."""
         self._hulls         = hulls
         self._boundary      = boundary
         self._show_boundary = show_boundary
+
+        if cameras is not None:
+            self._cameras = list(cameras)
 
         # Store world-space poses from rigid bodies
         if bodies:
@@ -220,6 +228,7 @@ class Viewport3D(QOpenGLWidget):
         # Scene elements
         self._draw_grid()
         self._draw_axes()
+        self._draw_cameras()
 
         if self._show_boundary and self._boundary is not None:
             self._draw_boundary(self._boundary)
@@ -272,6 +281,18 @@ class Viewport3D(QOpenGLWidget):
         glColor4f(0.9, 0.2, 0.2, 1.0); glVertex3f(_AXIS_LENGTH, 0.0, 0.0)
         glColor4f(0.2, 0.8, 0.2, 1.0); glVertex3f(0.0, _AXIS_LENGTH, 0.0)
         glColor4f(0.2, 0.4, 0.9, 1.0); glVertex3f(0.0, 0.0, _AXIS_LENGTH)
+        glEnd()
+
+    def _draw_cameras(self):
+        """All cameras as small dim dots at their real positions."""
+        if not self._cameras:
+            return
+        r, g, b = _BOUNDARY_COLOUR
+        glPointSize(4.0)
+        glColor4f(r, g, b, 0.45)
+        glBegin(GL_POINTS)
+        for cam in self._cameras:
+            glVertex3f(cam.position.x, cam.position.y, cam.position.z)
         glEnd()
 
     def _draw_boundary(self, boundary: BoundaryResult):

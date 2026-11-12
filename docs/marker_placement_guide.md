@@ -49,9 +49,19 @@ the flat faces.
    This name becomes the STL filename and the key in `scene.json`.
 5. Repeat for each obstacle.
 
-## Room boundary markers (optional)
+## Interest area markers (optional)
 
-If you are not using corner cameras for the boundary, place a dedicated
-rigid body named `boundary` with 4 markers at the floor corners of the
-experiment area. The tool will detect the name and treat it as the room
-boundary instead of an obstacle.
+To limit the boundary to part of the room (an "interest area") instead of
+the whole camera volume:
+
+1. Place markers **on the floor** at the corners of the area — 4 for a
+   rectangle, more for any other convex shape. Markers inside the area are
+   ignored; only the outline counts.
+2. In Motive, select them and create a rigid body named exactly `boundary`
+   (case-insensitive), and make sure it is published.
+3. In the tool, set *Room boundary → Source* to *'boundary' rigid body
+   (interest area)*.
+
+The `boundary` rigid body is never exported as an obstacle, whichever source
+is selected. Its markers must be visible at capture time (at least 3, not in
+a line).

@@ -44,7 +44,7 @@ Before connecting, check these in Motive:
 
 - **Publish only the relevant rigid bodies.** In the Assets pane, enable
   streaming only for the rigid bodies that are obstacles for this session
-  (plus `boundary`, if you use one). Every published rigid body with visible
+  (plus `boundary`, if you mark an interest area — see below). Every published rigid body with visible
   markers becomes an obstacle in the export.
 - **Empty rigid bodies are ignored.** A rigid body that is published but has no
   visible markers (e.g. a drone's asset while the drone is not in the volume)
@@ -60,6 +60,27 @@ Before connecting, check these in Motive:
 
 The rigid body names in Motive become the obstacle names and STL file names
 (they can be renamed in the tool before export).
+
+## Room boundary
+
+The floor of the capture volume is built from the camera positions
+(*Room boundary → Source* in the GUI):
+
+- **4 corner cameras (rectangle)** — default, for a rectangular truss like the
+  lab's. Uses the 4 cameras enclosing the largest area (the physical corners,
+  even if the truss is rotated relative to Motive's axes).
+- **All cameras (polygon)** — for any other layout (circular rig, fewer
+  cameras, irregular room): the floor is the outline of all cameras, an
+  N-sided polygon. Use this whenever the room has no 4 real corners.
+- **'boundary' rigid body (interest area)** — limits the boundary to part of
+  the room: a rigid body named `boundary` in Motive, with markers on the
+  floor at the area's corners. See `docs/marker_placement_guide.md`.
+
+All cameras are shown in the 3D preview as small dots; the ones at the
+boundary's corners are highlighted.
+
+Optionally, *Generate walls* adds a thin wall panel on every floor edge.
+See `docs/scene_json_spec.md` for how the boundary is stored.
 
 ## Coordinate convention
 
