@@ -91,3 +91,15 @@ def test_rename_keeps_pose_in_viewport(win):
     win._on_obstacle_renamed(old, "renamed")
     assert "renamed" in win._viewport._poses
     assert win._viewport._poses["renamed"] == pose
+
+
+@pytest.mark.parametrize("with_gazebo", [False, True])
+def test_export_optionally_writes_gazebo_world(win, tmp_path, monkeypatch, with_gazebo):
+    monkeypatch.setattr(QtWidgets.QFileDialog, "getExistingDirectory", lambda *a, **k: str(tmp_path))
+    monkeypatch.setattr(QtWidgets.QMessageBox, "information", lambda *a, **k: None)
+    win._act_mock.trigger()
+    win._chk_gazebo.setChecked(with_gazebo)
+    win._on_export()
+    session_dir = next(tmp_path.glob("session_*"))
+    assert (session_dir / "scene.json").exists()
+    assert (session_dir / "world.sdf").exists() == with_gazebo

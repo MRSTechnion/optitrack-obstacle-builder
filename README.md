@@ -98,6 +98,28 @@ boundary's corners are highlighted. After changing rigid bodies in Motive
 
 See `docs/scene_json_spec.md` for how the boundary is stored.
 
+## Use in Gazebo
+
+Turn an exported session into a Gazebo world:
+
+```bash
+obstacle-builder-gazebo ~/scenes/session_20261112_103000
+gz sim ~/scenes/session_20261112_103000/world.sdf
+```
+
+Or tick **Also write Gazebo world** in the Export panel to get it with every
+export. `world.sdf` is written into the session folder (mesh paths are relative, so
+the folder can be moved or shared). Every obstacle is a static model whose
+STL is used for both the look and the collisions; the boundary floor is
+drawn semi-transparent (not solid) and exported walls are solid. A ground
+plane and a light are added. No Gazebo plugins are set, so Gazebo uses its
+defaults — to use the obstacles in your own simulation (e.g. with a robot),
+copy the `<model>` blocks into your world or add your plugins to this one.
+
+Options: `-o FILE` (write elsewhere), `--name` (world name),
+`--no-ground-plane`, `--no-boundary`. Works with modern Gazebo (Fortress,
+Garden, Harmonic, …). From Python: `obstacle_builder.adapters.gazebo.write_world()`.
+
 ## Coordinate convention
 
 | Property | Value |

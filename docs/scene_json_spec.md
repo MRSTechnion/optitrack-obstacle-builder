@@ -123,7 +123,20 @@ for model in scene["models"]:
     # spawn model using pose + model["stl"]
 ```
 
-## Consuming scene.json in Gazebo (standalone)
+## Consuming scene.json in Gazebo
 
-The Gazebo adapter (see `src/obstacle_builder/adapters/`) reads `scene.json`
-and generates a `.sdf` world file with one `<model>` per entry.
+`obstacle-builder-gazebo <session>` (or `adapters.gazebo.write_world()`)
+writes `world.sdf` next to `scene.json`, with mesh URIs relative to it — the
+session folder stays self-contained. `gz sim <session>/world.sdf` runs it.
+
+| scene.json | world.sdf |
+|---|---|
+| each `models[]` entry | a static `<model>` named after it (sanitised to letters, digits, `_`, `-`; made unique), its STL as both `<visual>` and `<collision>` mesh, `<pose>` = `position` + `quaternion` as fixed-axis roll-pitch-yaw |
+| `boundary.stl` | `boundary_floor`: visual only (semi-transparent, 1 mm above the ground) — the floor is not an obstacle |
+| `boundary.wall_extrusion.stl_files` | `boundary_wall_N`: solid static models |
+| `convention: "y_up"` | poses (and the boundary) rotated into Gazebo's Z-up |
+
+Also added: a ground plane at Z = 0 and a directional light. The world has no
+`<plugin>` elements, so Gazebo loads its default systems; it is SDF 1.8, for
+modern Gazebo (Fortress / Garden / Harmonic and later). Gazebo Classic is not
+targeted.

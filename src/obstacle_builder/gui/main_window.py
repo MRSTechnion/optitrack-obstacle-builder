@@ -51,6 +51,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ..adapters import gazebo
 from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary
 from ..geometry.transform import convert_frame
 from ..natnet.client import MockNatNetConnection, NatNetConnection
@@ -344,6 +345,13 @@ class MainWindow(QMainWindow):
         self._notes_input = QLineEdit()
         self._notes_input.setPlaceholderText("e.g. experiment setup A")
         layout.addWidget(self._notes_input)
+
+        self._chk_gazebo = QCheckBox("Also write Gazebo world")
+        self._chk_gazebo.setToolTip(
+            "Write world.sdf into the session folder (run it with: gz sim world.sdf).\n"
+            "Same as running obstacle-builder-gazebo on the session afterwards."
+        )
+        layout.addWidget(self._chk_gazebo)
 
         self._btn_export = QPushButton("Export scene")
         self._btn_export.setFixedHeight(36)
@@ -801,6 +809,8 @@ class MainWindow(QMainWindow):
                 notes           = self._notes_input.text().strip(),
             )
             session_dir = export_session(session, output_path)
+            if self._chk_gazebo.isChecked():
+                gazebo.write_world(session_dir)
 
             self._export_status.setText(f"Saved to:\n{session_dir.name}")
             self._set_status(f"Exported → {session_dir}")
