@@ -16,10 +16,12 @@ dependencies = [
     "scipy>=1.12",
     "numpy-stl>=3.0",
     "platformdirs>=4.0",
+    "python-fcl>=0.7",
 ]
 
 [project.optional-dependencies]
 ros = ["rclpy"]
+ompl = ["ompl>=2.0"]   # examples/ompl_planning.py — Linux / macOS only (no Windows wheels)
 dev = ["pytest>=7", "ruff==0.17.4"]
 
 [project.scripts]

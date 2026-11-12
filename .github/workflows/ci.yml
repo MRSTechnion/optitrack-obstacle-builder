@@ -35,6 +35,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
+      - name: Install OMPL (Linux / macOS - no Windows wheels)
+        if: runner.os != 'Windows'
+        run: pip install -e ".[ompl]"
+
       - name: Lint with ruff
         run: ruff check src/ tests/
 

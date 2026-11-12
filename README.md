@@ -122,6 +122,23 @@ Options: `-o FILE` (write elsewhere), `--name` (world name),
 `--no-ground-plane`, `--no-boundary`. Works with modern Gazebo (Fortress,
 Garden, Harmonic, …). From Python: `obstacle_builder.adapters.gazebo.write_world()`.
 
+## Use in a planner (3D collision checks)
+
+```python
+from obstacle_builder.collision import CollisionWorld, Sphere
+
+world = CollisionWorld.from_session("session_20261112_103000", floor=True)
+world.collides(Sphere(0.25), (1.0, 0.5, 1.2))          # is the pose free?
+world.segment_free((0, 0, 1), (2, 1, 1), radius=0.25)  # is the straight move free?
+```
+
+The obstacles (and exported walls) are solid 3D objects for any robot shape
+(sphere, box, cylinder, capsule): collision, clearance distance, exact
+straight-line moves, room bounds. Works with OMPL or any other planner —
+see `docs/collision.md` for the full guide, the safety-margin advice, a C++
+(FCL) recipe, and `examples/ompl_planning.py`, a tested OMPL template for a
+drone and a ground robot (`pip install -e ".[ompl]"`, Linux / macOS).
+
 ## Coordinate convention
 
 | Property | Value |
