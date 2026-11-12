@@ -182,6 +182,7 @@ class NatNetConnection:
         # Body name registry: id → name  (from DataDescriptions)
         self._id_to_name: dict[int, str] = {}
         self._names_received = threading.Event()
+        self._descriptions_received = threading.Event()   # any descriptions packet
 
         # Camera list (from DataDescriptions)
         self._cameras: list[CameraInfo] = []
@@ -246,16 +247,7 @@ class NatNetConnection:
                     f"NatNet version: {self._sdk.get_nat_net_requested_version()}")
 
         # Request data descriptions to get rigid body names and camera positions
-        self._sdk.send_request(
-            self._sdk.command_socket,
-            self._sdk.NAT_REQUEST_MODELDEF,
-            "",
-            (self.server_ip, self._sdk.command_port),
-        )
-
-        # Give descriptions time to arrive
-        self._names_received.wait(timeout=3.0)
-        self._cameras_received.wait(timeout=3.0)
+        self._refresh_descriptions()
 
         if not self._id_to_name:
             logger.warning(
@@ -265,6 +257,25 @@ class NatNetConnection:
         if not self._cameras:
             logger.warning("No camera descriptions received.")
 
+        return True
+
+    def _refresh_descriptions(self, timeout: float = 3.0) -> bool:
+        """
+        Ask Motive for its current data descriptions (rigid body names,
+        camera positions) and wait for the reply. Done on connect and before
+        every capture, so rigid bodies created, renamed or unpublished in
+        Motive while connected are picked up.
+        """
+        self._descriptions_received.clear()
+        self._sdk.send_request(
+            self._sdk.command_socket,
+            self._sdk.NAT_REQUEST_MODELDEF,
+            "",
+            (self.server_ip, self._sdk.command_port),
+        )
+        if not self._descriptions_received.wait(timeout=timeout):
+            logger.warning("Motive did not send data descriptions; names may be out of date.")
+            return False
         return True
 
     def disconnect(self) -> None:
@@ -289,6 +300,9 @@ class NatNetConnection:
         if not self._running:
             logger.error("capture_frame() called but not connected.")
             return None
+
+        # Pick up rigid bodies created / renamed in Motive since the last capture
+        self._refresh_descriptions()
 
         logger.info(f"Capturing {num_frames} frames...")
 
@@ -377,9 +391,12 @@ class NatNetConnection:
           - Per-body error and tracking_valid
           - Labeled marker positions (keyed by model_id)
         """
-        # Update error + tracking_valid for each rigid body
-        for rb in mocap_data.rigid_body_data.rigid_body_list:
-            with self._rb_lock:
+        # Update error + tracking_valid for each rigid body, and forget bodies
+        # that are no longer streamed (unpublished in Motive) so they do not
+        # linger in later frames at their last pose.
+        rb_list = mocap_data.rigid_body_data.rigid_body_list
+        with self._rb_lock:
+            for rb in rb_list:
                 existing = self._rb_poses.get(rb.id_num, (rb.pos, rb.rot, 0.0, False))
                 self._rb_poses[rb.id_num] = (
                     existing[0],
@@ -387,6 +404,9 @@ class NatNetConnection:
                     rb.error,
                     rb.tracking_valid,
                 )
+            streamed = {rb.id_num for rb in rb_list}
+            for gone in set(self._rb_poses) - streamed:
+                del self._rb_poses[gone]
 
         # Update labeled markers grouped by model_id
         new_markers: dict[int, list] = {}
@@ -404,13 +424,16 @@ class NatNetConnection:
         Called by our SDK interceptor when DataDescriptions arrive.
         Populates the id→name registry and camera list.
         """
-        # Rigid body names
+        # Rigid body names — replace the registry, so renamed / deleted bodies
+        # do not keep their old names.
+        id_to_name = {}
         for rb_desc in data_descs.rigid_body_list:
             name = rb_desc.sz_name
             if isinstance(name, bytes):
                 name = name.decode("utf-8")
-            self._id_to_name[rb_desc.id_num] = name
+            id_to_name[rb_desc.id_num] = name
             logger.debug(f"Registered body: id={rb_desc.id_num} name='{name}'")
+        self._id_to_name = id_to_name
         if self._id_to_name:
             self._names_received.set()
 
@@ -427,9 +450,12 @@ class NatNetConnection:
                 position  = Vector3(pos[0], pos[1], pos[2]),
             ))
         if cameras:
+            if len(cameras) != len(self._cameras):
+                logger.info(f"Received {len(cameras)} cameras from data descriptions.")
             self._cameras = cameras
             self._cameras_received.set()
-            logger.info(f"Received {len(cameras)} cameras from data descriptions.")
+
+        self._descriptions_received.set()
 
     # ------------------------------------------------------------------
     # Frame assembly

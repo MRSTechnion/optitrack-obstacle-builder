@@ -10,6 +10,7 @@ the hook stays wired up — no OptiTrack hardware or network needed.
 from __future__ import annotations
 
 import struct
+from types import SimpleNamespace as _NS
 
 import pytest
 
@@ -323,3 +324,52 @@ def test_shutdown_does_not_hang_without_traffic():
     done.start()
     done.join(timeout=3)
     assert not done.is_alive(), "shutdown() hung"
+
+
+# ---------------------------------------------------------------------------
+# Changes made in Motive while connected
+# ---------------------------------------------------------------------------
+
+
+def _descs(bodies):
+    return _NS(
+        rigid_body_list=[_NS(sz_name=name.encode(), id_num=i) for i, name in bodies],
+        camera_list=[],
+    )
+
+
+def _mocap(ids):
+    return _NS(
+        rigid_body_data=_NS(rigid_body_list=[
+            _NS(id_num=i, error=0.0, tracking_valid=True, pos=(0, 0, 0), rot=(0, 0, 0, 1))
+            for i in ids
+        ]),
+        labeled_marker_data=_NS(labeled_marker_list=[]),
+    )
+
+
+def test_renamed_body_gets_new_name_and_old_one_is_dropped():
+    conn = client_mod.NatNetConnection()
+    conn._on_data_descriptions(_descs([(7, "Box_01"), (8, "old_crate")]))
+    conn._on_data_descriptions(_descs([(7, "Boundary")]))     # renamed + one deleted
+    assert conn._id_to_name == {7: "Boundary"}
+    assert conn._descriptions_received.is_set()
+
+
+def test_unpublished_body_is_forgotten():
+    conn = client_mod.NatNetConnection()
+    conn._on_rigid_body(7, (0, 0, 0), (0, 0, 0, 1))
+    conn._on_rigid_body(8, (1, 0, 0), (0, 0, 0, 1))
+    conn._on_mocap_data(_mocap([7, 8]))
+    conn._on_mocap_data(_mocap([7]))                           # body 8 unpublished
+    assert set(conn._rb_poses) == {7}
+
+
+def test_capture_refreshes_descriptions_first(monkeypatch):
+    conn = client_mod.NatNetConnection()
+    conn._running = True
+    calls = []
+    monkeypatch.setattr(conn, "_refresh_descriptions", lambda *a, **k: calls.append(1) or True)
+    monkeypatch.setattr(client_mod, "_CAPTURE_TIMEOUT_S", 0.05)
+    conn.capture_frame()
+    assert calls == [1]
