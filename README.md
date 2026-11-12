@@ -156,14 +156,22 @@ See `docs/marker_placement_guide.md` for how to place reflective markers
 on physical obstacles so the tool can reconstruct their geometry.
 
 ## Output structure
-<chosen_directory>/
-session_YYYYMMDD_HHMMSS/
-models/
 
-<obstacle_name>.stl ← geometry centred at origin, body-local frame
-boundary.stl ← capture volume floor polygon
-scene.json ← world poses for every model
+Each export creates a session folder inside the directory you choose:
 
+```text
+<chosen directory>/
+└── session_YYYYMMDD_HHMMSS/
+    ├── scene.json              world poses + metadata for every model
+    ├── models/
+    │   ├── <obstacle>.stl      one per obstacle: convex hull, body-local frame
+    │   ├── boundary.stl        floor polygon of the room boundary
+    │   └── boundary_wall_N.stl wall panels (only with "Generate walls")
+    └── world.sdf               Gazebo world (only with "Also write Gazebo world")
+```
+
+The STLs are centred on each body's origin; `scene.json` places them in the
+world. See `docs/scene_json_spec.md`.
 
 ## Supported platforms
 
