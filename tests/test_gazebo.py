@@ -160,3 +160,108 @@ def test_gz_sim_loads_world_headless(session_dir, tmp_path):
     log = out.stdout + out.stderr
     assert out.returncode == 0, log
     assert "[Err]" not in log, log
+
+
+# ---------------------------------------------------------------------------
+# Base world: add the obstacles to an existing world (e.g. CrazySim's)
+# ---------------------------------------------------------------------------
+
+# Shaped like CrazySim's crazysim_default.sdf: its own systems, ground and sun
+_BASE_WORLD = """<?xml version="1.0" ?>
+<sdf version="1.9">
+  <world name="sim_default">
+    <!-- keep me -->
+    <physics type="ode"><max_step_size>0.001</max_step_size></physics>
+    <plugin name='gz::sim::systems::Physics' filename='gz-sim-physics-system'/>
+    <plugin name='gz::sim::systems::UserCommands' filename='gz-sim-user-commands-system'/>
+    <plugin name='gz::sim::systems::SceneBroadcaster' filename='gz-sim-scene-broadcaster-system'/>
+    <plugin name='gz::sim::systems::Contact' filename='gz-sim-contact-system'/>
+    <plugin name='gz::sim::systems::Imu' filename='gz-sim-imu-system'/>
+    <plugin name='gz::sim::systems::AirPressure' filename='gz-sim-air-pressure-system'/>
+    <gravity>0 0 -9.80665</gravity>
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision"><geometry><plane><normal>0 0 1</normal></plane></geometry></collision>
+      </link>
+    </model>
+    <light type="directional" name="sun"><direction>-0.5 0.1 -0.9</direction></light>
+  </world>
+</sdf>
+"""
+
+
+@pytest.fixture
+def base_world(tmp_path):
+    path = tmp_path / "base" / "sim_default.sdf"
+    path.parent.mkdir()
+    path.write_text(_BASE_WORLD)
+    return path
+
+
+def test_base_world_keeps_its_settings_and_adds_obstacles(session_dir, base_world, tmp_path):
+    out = gazebo.write_world(session_dir, tmp_path / "worlds" / "lab.sdf", base_world=base_world)
+    root = ET.parse(out, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True))).getroot()
+    world = root.find("world")
+    assert root.get("version") == "1.9"
+    assert world.get("name") == "lab"                      # named after the file (CrazySim needs this)
+    assert len(world.findall("plugin")) == 6
+    assert world.find("physics/max_step_size").text == "0.001"
+    assert any("keep me" in (c.text or "") for c in world.iter(ET.Comment))
+    models = _models(out)
+    assert len([n for n in models if n == "ground_plane"]) == 1   # the base's own ground only
+    assert models["ground_plane"].find("link/visual") is None
+    assert len(world.findall("light")) == 1
+    scene = json.loads((session_dir / "scene.json").read_text())
+    assert all(m["name"] in models for m in scene["models"])
+    assert any(n.startswith("boundary_wall") for n in models)
+    for uri in root.iter("uri"):
+        assert (out.parent / uri.text).resolve().exists(), uri.text
+    assert "keep me" in base_world.read_text()             # base file untouched
+    assert ET.parse(base_world).getroot().find("world").get("name") == "sim_default"
+
+
+def test_base_world_name_option_and_clashes(session_dir, base_world, tmp_path):
+    scene_path = session_dir / "scene.json"
+    scene = json.loads(scene_path.read_text())
+    scene["models"][0]["name"] = "sun"                    # clashes with the base's light
+    scene_path.write_text(json.dumps(scene))
+    out = gazebo.write_world(session_dir, tmp_path / "x.sdf", base_world=base_world,
+                             world_name="custom")
+    world = ET.parse(out).getroot().find("world")
+    assert world.get("name") == "custom"
+    assert "sun_2" in _models(out)
+
+
+@pytest.mark.parametrize("content", ["not xml <", "<sdf><model name='m'/></sdf>", "<robot/>"])
+def test_bad_base_world(session_dir, tmp_path, content):
+    bad = tmp_path / "bad.sdf"
+    bad.write_text(content)
+    with pytest.raises(ValueError):
+        gazebo.write_world(session_dir, tmp_path / "o.sdf", base_world=bad)
+    with pytest.raises(FileNotFoundError):
+        gazebo.write_world(session_dir, tmp_path / "o.sdf", base_world=tmp_path / "missing.sdf")
+
+
+def test_cli_base_world(session_dir, base_world, tmp_path):
+    out = tmp_path / "lab.sdf"
+    assert gazebo.main([str(session_dir), "-o", str(out), "--base-world", str(base_world)]) == 0
+    assert ET.parse(out).getroot().find("world").get("name") == "lab"
+
+
+@needs_gz
+def test_gz_sim_loads_base_world_headless(session_dir, base_world, tmp_path):
+    world = gazebo.write_world(session_dir, tmp_path / "worlds" / "lab.sdf", base_world=base_world)
+    check = subprocess.run(["gz", "sdf", "-k", str(world)], check=False,
+                           capture_output=True, text=True, timeout=60)
+    assert check.returncode == 0 and "Valid" in check.stdout, check.stdout + check.stderr
+    try:
+        out = subprocess.run(
+            ["gz", "sim", "-s", "-r", "--iterations", "50", "-v", "2", str(world)],
+            check=False, capture_output=True, text=True, timeout=120, cwd=tmp_path,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip("gz sim did not finish in time on this machine")
+    log = out.stdout + out.stderr
+    assert out.returncode == 0, log
+    assert "[Err]" not in log, log

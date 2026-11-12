@@ -134,4 +134,21 @@ session folder stays self-contained. `gz sim <session>/world.sdf` runs it.
 Also added: a ground plane at Z = 0 and a directional light. The world has no
 `<plugin>` elements, so Gazebo loads its default systems; it is SDF 1.8, for
 modern Gazebo (Fortress / Garden / Harmonic and later). Gazebo Classic is not
-targeted.
+targeted.With `--base-world FILE`, the same models are added to a copy of that world
+instead. Its physics, plugins, ground and lights are kept, and no ground
+plane or light is added.
+
+## Consuming scene.json in MuJoCo
+
+`obstacle-builder-mujoco <session>` (or `adapters.mujoco.write_mjcf()`)
+writes `mujoco.xml` next to `scene.json`.
+
+| scene.json | mujoco.xml |
+|---|---|
+| each `models[]` entry | a `<body>` in the world body (static) named after it, `pos` = `position`, `quat` = `quaternion` reordered to MuJoCo's `w x y z`; one mesh `<geom>` whose `<mesh>` lists the STL's vertices inline (MuJoCo uses their convex hull, which is the hull itself) |
+| `boundary.wall_extrusion.stl_files` | `boundary_wall_N` bodies, the same way, in the world frame |
+| `boundary.stl` | not used. The floor polygon is the planning area, not a solid. |
+
+Also added: a floor plane at Z = 0 and a light. With `--base-scene FILE`,
+the bodies and meshes are added to a copy of that scene, and its own
+options, floor and assets are kept.

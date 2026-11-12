@@ -21,15 +21,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ros = ["rclpy"]
 ompl = ["ompl>=2.0"]   # examples/ompl_planning.py — Linux / macOS only (no Windows wheels)
-dev = ["pytest>=7", "ruff==0.17.4"]
+dev = ["pytest>=7", "ruff==0.17.4", "mujoco>=3.2"]   # mujoco: tests of the MuJoCo adapter
 
 [project.scripts]
 obstacle-builder = "obstacle_builder.gui.main_window:main"
 obstacle-builder-gazebo = "obstacle_builder.adapters.gazebo:main"
 obstacle-builder-octomap = "obstacle_builder.adapters.octomap:main"
 obstacle-builder-ros2 = "obstacle_builder.adapters.ros2:main"
+obstacle-builder-mujoco = "obstacle_builder.adapters.mujoco:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

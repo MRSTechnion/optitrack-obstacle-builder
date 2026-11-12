@@ -115,12 +115,92 @@ the folder can be moved or shared). Every obstacle is a static model whose
 STL is used for both the look and the collisions; the boundary floor is
 drawn semi-transparent (not solid) and exported walls are solid. A ground
 plane and a light are added. No Gazebo plugins are set, so Gazebo uses its
-defaults — to use the obstacles in your own simulation (e.g. with a robot),
-copy the `<model>` blocks into your world or add your plugins to this one.
+defaults.
+
+**Add the obstacles to an existing world.** Simulators that need their own
+world settings (physics, sensor plugins, ground) work with `--base-world`. It
+writes a copy of that world with the obstacles and walls added and
+everything else kept. The world is named after the output file (`--name`
+to change it).
+
+```bash
+obstacle-builder-gazebo SESSION --base-world my_sim/worlds/default.sdf -o my_sim/worlds/lab.sdf
+```
+
+Mesh paths in the new world point back to the session folder, so keep the
+session where it is (or write the world again).
+
+*Example: CrazySim (Crazyflie SITL).* CrazySim needs the sensor systems in
+its own default world, picks worlds by name from its `worlds/` folder, and
+expects the world name to equal the file name:
+
+```bash
+W=crazyflie-firmware/tools/crazyflie-simulation/simulator_files/gazebo/worlds
+obstacle-builder-gazebo SESSION --base-world $W/crazysim_default.sdf -o $W/lab.sdf
+cd crazyflie-firmware
+bash tools/crazyflie-simulation/simulator_files/gazebo/launch/sitl_singleagent.sh -m crazyflie -x 0 -y 0 -w lab
+```
+
+The other CrazySim launch scripts accept `-w` too. Place the drone with
+`-x`/`-y` in a free spot: the coordinates are the OptiTrack frame.
+
+If the launch prints `Service call timed out`, the drone was not spawned,
+and cflib gets "Connection refused". The scripts give Gazebo only 0.3 s to
+answer. Spawn the drone by hand while the simulation runs:
+
+```bash
+gz service -s /world/lab/create --reqtype gz.msgs.EntityFactory --reptype gz.msgs.Boolean --timeout 5000 \
+    --req 'sdf_filename: "/tmp/crazyflie_0.sdf", pose: {position: {x:-2, y:1.2, z: 0.5}}, name: "crazyflie_0", allow_renaming: 1'
+```
+
+For a lasting fix, change `--timeout 300` to `--timeout 5000` in CrazySim's
+`sitl_*.sh` scripts.
 
 Options: `-o FILE` (write elsewhere), `--name` (world name),
-`--no-ground-plane`, `--no-boundary`. Works with modern Gazebo (Fortress,
-Garden, Harmonic, …). From Python: `obstacle_builder.adapters.gazebo.write_world()`.
+`--no-ground-plane`, `--no-boundary`, `--base-world FILE`. Works with modern
+Gazebo (Fortress, Garden, Harmonic, …). From Python:
+`obstacle_builder.adapters.gazebo.write_world()`.
+
+## Use in MuJoCo (e.g. Crazyflow)
+
+Turn a session into a MuJoCo scene (MJCF):
+
+```bash
+obstacle-builder-mujoco ~/scenes/session_20261112_103000         # → mujoco.xml
+python -m mujoco.viewer --mjcf=$HOME/scenes/session_20261112_103000/mujoco.xml
+```
+
+Every obstacle (and exported wall) becomes a static body at its pose, with
+its hull as a collision mesh. The meshes are written into the XML itself,
+so the file works wherever it is loaded from. The scene also gets a floor
+plane and a light. To add the obstacles to an existing scene instead and
+keep its options, floor and look, pass `--base-scene FILE -o OUT.xml`.
+
+*Example: Crazyflow.* Load it as the simulation scene, starting from
+Crazyflow's own `scene.xml`:
+
+```bash
+CF=$(python -c "import importlib.util as u, pathlib; print(pathlib.Path(u.find_spec('crazyflow').origin).parent)")
+obstacle-builder-mujoco SESSION --base-scene $CF/scene.xml -o lab.xml
+```
+
+```python
+from pathlib import Path
+from crazyflow.sim import Sim
+
+sim = Sim(xml_path=Path("lab.xml"))   # a Path: Crazyflow does not accept a str
+sim.reset()
+...
+sim.contacts()        # True for drones touching an obstacle, a wall or the floor
+```
+
+The obstacles are used for contacts and rendering. As in all Crazyflow
+scenes, they don't push the drone back. Crazyflow needs Python 3.11 or
+newer, so install it in a separate environment if you also use ROS 2 Humble
+(3.10). The `obstacle-builder-mujoco` step can run in either.
+
+Options: `--no-walls`, `--no-floor`, `--name`. From Python:
+`obstacle_builder.adapters.mujoco.write_mjcf()`.
 
 ## Use as an OctoMap (3D occupancy map)
 
@@ -259,7 +339,8 @@ Each export creates a session folder inside the directory you choose:
     │   ├── boundary.stl        floor polygon of the room boundary
     │   └── boundary_wall_N.stl wall panels (only with "Generate walls")
     ├── world.sdf               Gazebo world (only with "Also write Gazebo world")
-    └── octomap.bt              3D occupancy map (only with "Also write OctoMap")
+    ├── octomap.bt              3D occupancy map (only with "Also write OctoMap")
+    └── mujoco.xml              MuJoCo scene (only from obstacle-builder-mujoco)
 ```
 
 The STLs are centred on each body's origin; `scene.json` places them in the
