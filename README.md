@@ -38,6 +38,18 @@ Or directly:
 python scripts/run.py
 ```
 
+- **File → Open session…** (Ctrl+O) — view a previously exported session:
+  pick its `scene.json`. The obstacles and boundary are shown as saved; it is
+  read-only (a saved session has no markers, so nothing can be recomputed or
+  re-exported). *Disconnect* closes it.
+- **Dev → Load mock scene** — tick to load built-in sample data (3 obstacles,
+  4 cameras) and try the tool without OptiTrack; untick to remove it. It is
+  not a saved session.
+
+Connecting to OptiTrack, opening a session and the mock scene replace each
+other — only one is shown at a time. The dot in the toolbar shows which:
+green = live OptiTrack, amber = mock scene, blue = saved session.
+
 ## Motive setup
 
 Before connecting, check these in Motive:
@@ -63,23 +75,27 @@ The rigid body names in Motive become the obstacle names and STL file names
 
 ## Room boundary
 
-The floor of the capture volume is built from the camera positions
-(*Room boundary → Source* in the GUI):
+The boundary is the floor of the area the obstacles live in, at Z = 0.
+Choose how it is built with *Room boundary → Source*:
 
-- **4 corner cameras (rectangle)** — default, for a rectangular truss like the
-  lab's. Uses the 4 cameras enclosing the largest area (the physical corners,
-  even if the truss is rotated relative to Motive's axes).
-- **All cameras (polygon)** — for any other layout (circular rig, fewer
-  cameras, irregular room): the floor is the outline of all cameras, an
-  N-sided polygon. Use this whenever the room has no 4 real corners.
-- **'boundary' rigid body (interest area)** — limits the boundary to part of
-  the room: a rigid body named `boundary` in Motive, with markers on the
-  floor at the area's corners. See `docs/marker_placement_guide.md`.
+| Source | Floor shape | Use it when |
+|---|---|---|
+| **4 corner cameras** (default) | Rectangle through the 4 corner cameras — the 4 cameras enclosing the largest area, i.e. the physical corners even if the truss is rotated relative to Motive's axes. | The cameras sit on a rectangular truss, like the lab's. |
+| **All cameras** | Polygon: the outline of all cameras (N sides; cameras inside the outline are ignored). | The room has no 4 real corners — circular rig, fewer cameras, irregular layout. |
+| **Interest area** | Polygon: the outline of the markers of a rigid body named `boundary`, placed on the floor at the area's corners (4 markers → rectangle). | You only want part of the room. See `docs/marker_placement_guide.md`. |
+
+Other boundary options:
+
+- **Generate walls** — a thin wall panel on every floor edge, with the given
+  **Height**, extruded **Outward** (toward the physical walls, default) or
+  **Inward** (into the area). Changes apply immediately.
+- **Show boundary in preview** — display only. The boundary (and walls, if
+  enabled) is always included in the export.
 
 All cameras are shown in the 3D preview as small dots; the ones at the
-boundary's corners are highlighted.
+boundary's corners are highlighted. After changing rigid bodies in Motive
+(e.g. adding the `boundary` body), press **Refresh**.
 
-Optionally, *Generate walls* adds a thin wall panel on every floor edge.
 See `docs/scene_json_spec.md` for how the boundary is stored.
 
 ## Coordinate convention

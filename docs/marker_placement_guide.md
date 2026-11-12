@@ -59,8 +59,8 @@ the whole camera volume:
    ignored; only the outline counts.
 2. In Motive, select them and create a rigid body named exactly `boundary`
    (case-insensitive), and make sure it is published.
-3. In the tool, set *Room boundary → Source* to *'boundary' rigid body
-   (interest area)*.
+3. In the tool, set *Room boundary → Source* to *Interest area*, and press
+   *Refresh* if the tool was already connected.
 
 The `boundary` rigid body is never exported as an obstacle, whichever source
 is selected. Its markers must be visible at capture time (at least 3, not in

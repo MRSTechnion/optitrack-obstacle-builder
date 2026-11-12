@@ -74,6 +74,7 @@ class ObstacleTable(QTableWidget):
         self,
         hulls:   dict[str, HullResult],
         bodies:  list[RigidBody],
+        marker_counts: dict[str, int] | None = None,   # overrides (saved sessions)
     ):
         """
         Rebuild the table from the current hull results.
@@ -91,7 +92,10 @@ class ObstacleTable(QTableWidget):
         for i, (name, hull) in enumerate(hulls.items()):
             colour = _COLOURS[i % len(_COLOURS)]
             body   = body_map.get(name)
-            markers = body.marker_count if body else len(hull.vertices)
+            if marker_counts and name in marker_counts:
+                markers = marker_counts[name]
+            else:
+                markers = body.marker_count if body else len(hull.vertices)
             volume_cm3 = round(hull.volume * 1e6, 1)
 
             self.insertRow(i)

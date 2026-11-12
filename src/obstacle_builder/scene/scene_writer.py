@@ -26,8 +26,18 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ..geometry.hull import BoundaryResult, HullResult, export_boundary_stl, export_hull_stl
-from ..natnet.types import RigidBody
+import numpy as np
+from stl import mesh as stl_mesh  # numpy-stl
+
+from ..geometry.hull import (
+    BoundaryResult,
+    HullResult,
+    _sort_polygon_ccw,
+    _triangulate_polygon,
+    export_boundary_stl,
+    export_hull_stl,
+)
+from ..natnet.types import CameraInfo, Quaternion, RigidBody, Vector3
 
 logger = logging.getLogger(__name__)
 
@@ -308,3 +318,118 @@ def _fmt_vec(v) -> list[float]:
 def _fmt_quat(q) -> list[float]:
     """Format a 4-element quaternion as a list of rounded floats."""
     return [round(float(x), 6) for x in q]
+
+# ---------------------------------------------------------------------------
+# Loading a saved session back (GUI "Open session", adapters)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class LoadedSession:
+    """
+    A saved session read back from disk: the same objects the live pipeline
+    produces, so it can be shown in the GUI (or used by adapters).
+
+    There are no markers in a saved session, so nothing can be recomputed —
+    it is a read-only view of what was exported.
+
+    session_dir   : directory containing scene.json
+    scene         : the raw scene.json dict
+    hulls         : name → HullResult (from the STLs, body-local frame)
+    bodies        : RigidBody per model, carrying only its world pose
+    marker_counts : name → marker count recorded at export
+    boundary      : BoundaryResult rebuilt from the boundary record, or None
+    """
+    session_dir:   Path
+    scene:         dict
+    hulls:         dict[str, HullResult]
+    bodies:        list[RigidBody]
+    marker_counts: dict[str, int]
+    boundary:      BoundaryResult | None
+
+
+def load_session(path: Path) -> LoadedSession:
+    """
+    Load an exported session: `path` is the session directory or its
+    scene.json. Raises FileNotFoundError / ValueError on missing or invalid
+    files (with the offending path in the message).
+    """
+    path = Path(path)
+    scene_path = path / "scene.json" if path.is_dir() else path
+    scene = load_scene(scene_path)
+    session_dir = scene_path.parent
+
+    hulls:  dict[str, HullResult] = {}
+    bodies: list[RigidBody] = []
+    marker_counts: dict[str, int] = {}
+    for model in scene["models"]:
+        name = model["name"]
+        verts, faces = _read_stl(session_dir / model["stl"])
+        hulls[name] = HullResult(
+            vertices        = verts,
+            faces           = faces,
+            volume          = float(model.get("hull_volume_m3", 0.0)),
+            centroid_offset = verts.mean(axis=0),
+            name            = name,
+        )
+        bodies.append(RigidBody(
+            body_id        = len(bodies),
+            name           = name,
+            position       = Vector3(*model["position"]),
+            orientation    = Quaternion(*model["quaternion"]),
+            markers        = [],
+            tracking_valid = True,
+            mean_error     = 0.0,
+        ))
+        marker_counts[name] = int(model.get("marker_count", 0))
+
+    boundary = None
+    if scene.get("boundary"):
+        boundary = _load_boundary(scene["boundary"], session_dir)
+
+    return LoadedSession(
+        session_dir   = session_dir,
+        scene         = scene,
+        hulls         = hulls,
+        bodies        = bodies,
+        marker_counts = marker_counts,
+        boundary      = boundary,
+    )
+
+
+def _read_stl(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """Read an STL into (unique vertices (N, 3), face indices (M, 3))."""
+    if not path.exists():
+        raise FileNotFoundError(f"STL referenced by scene.json not found: {path}")
+    m = stl_mesh.Mesh.from_file(str(path))
+    flat = m.vectors.reshape(-1, 3).astype(float)
+    verts, inverse = np.unique(flat.round(9), axis=0, return_inverse=True)
+    return verts, inverse.reshape(-1, 3)
+
+
+def _load_boundary(rec: dict, session_dir: Path) -> BoundaryResult:
+    """Rebuild a BoundaryResult from a scene.json boundary record."""
+    if "floor_polygon" in rec:
+        floor = np.array(rec["floor_polygon"], dtype=float)
+    else:
+        # Sessions exported before floor_polygon existed: use the floor STL
+        floor, _ = _read_stl(session_dir / rec["stl"])
+        floor = _sort_polygon_ccw(floor)
+
+    walls = []
+    for stl in (rec.get("wall_extrusion") or {}).get("stl_files", []):
+        walls.append(_read_stl(session_dir / stl))
+
+    dims = rec.get("room_dimensions", {})
+    return BoundaryResult(
+        floor_vertices = floor,
+        floor_faces    = _triangulate_polygon(len(floor)),
+        wall_meshes    = walls,
+        corner_cameras = [
+            CameraInfo(camera_id=i, name=f"camera_{i}", position=Vector3(*p), is_corner=True)
+            for i, p in enumerate(rec.get("corner_camera_positions", []))
+        ],
+        room_width_x   = float(dims.get("width_x", 0.0)),
+        room_depth_y   = float(dims.get("depth_y", 0.0)),
+        room_height_z  = float(dims.get("height_z", 0.0)),
+        mode           = {"all_cameras": "all"}.get(rec.get("mode", "corners"), rec.get("mode", "corners")),
+    )

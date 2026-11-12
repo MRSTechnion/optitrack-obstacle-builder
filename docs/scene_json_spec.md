@@ -92,7 +92,16 @@ onto Z = 0. `boundary` is `null` if there were too few cameras.
   `marker_placement_guide.md`). 4 markers give a quadrilateral, more give a
   polygon. Not tied to the cameras.
 
-Selected in the GUI under *Room boundary → Source*.
+Selected in the GUI under *Room boundary → Source*: *4 corner cameras*
+(`corners`), *All cameras* (`all_cameras`), *Interest area* (`rigid_body`).
+
+## Loading a session in Python
+
+`obstacle_builder.scene.scene_writer.load_session(path)` (session directory or
+its `scene.json`) returns the hulls (vertices + faces from the STLs, body-local
+frame), each model's world pose, and the boundary (floor polygon, walls,
+corner cameras) — the same objects the tool works with. The GUI's
+*File → Open session* uses it; adapters can too.
 
 ## Consuming scene.json in ROS 2
 

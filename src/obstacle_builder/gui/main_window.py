@@ -55,7 +55,7 @@ from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary
 from ..geometry.transform import convert_frame
 from ..natnet.client import MockNatNetConnection, NatNetConnection
 from ..natnet.types import Frame
-from ..scene.scene_writer import build_session, export_session
+from ..scene.scene_writer import build_session, export_session, load_session
 from .obstacle_table import ObstacleTable
 from .viewport import Viewport3D
 
@@ -131,6 +131,8 @@ class MainWindow(QMainWindow):
         self._hulls  = {}          # name → HullResult
         self._skipped_bodies: list[str] = []   # streamed bodies with no hull
         self._boundary = None      # BoundaryResult or None
+        # A saved session opened with File → Open session (read-only view)
+        self._session = None       # LoadedSession or None
         self._z_up   = True        # current axis convention
         self._worker: QThread | None = None
 
@@ -209,12 +211,10 @@ class MainWindow(QMainWindow):
         self._btn_connect    = QPushButton("Connect")
         self._btn_disconnect = QPushButton("Disconnect")
         self._btn_refresh    = QPushButton("Refresh")
-        self._btn_mock       = QPushButton("Load fixture")
 
         self._btn_connect.clicked.connect(self._on_connect)
         self._btn_disconnect.clicked.connect(self._on_disconnect)
         self._btn_refresh.clicked.connect(self._on_refresh)
-        self._btn_mock.clicked.connect(self._on_load_mock)
 
         layout.addWidget(self._status_dot)
         layout.addWidget(self._connection_label)
@@ -224,7 +224,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._btn_connect)
         layout.addWidget(self._btn_disconnect)
         layout.addWidget(self._btn_refresh)
-        layout.addWidget(self._btn_mock)
 
         return bar
 
@@ -235,8 +234,10 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
 
-        layout.addWidget(self._build_convention_group())
-        layout.addWidget(self._build_boundary_group())
+        self._convention_group = self._build_convention_group()
+        self._boundary_group   = self._build_boundary_group()
+        layout.addWidget(self._convention_group)
+        layout.addWidget(self._boundary_group)
 
         # Obstacle table takes remaining space
         obs_group = QGroupBox("Obstacles")
@@ -274,17 +275,16 @@ class MainWindow(QMainWindow):
         source_row = QHBoxLayout()
         source_row.addWidget(QLabel("Source:"))
         self._boundary_source = QComboBox()
-        self._boundary_source.addItem("4 corner cameras (rectangle)", "corners")
-        self._boundary_source.addItem("All cameras (polygon)", "all")
-        self._boundary_source.addItem(
-            f"'{BOUNDARY_BODY_NAME}' rigid body (interest area)", "rigid_body"
-        )
+        self._boundary_source.addItem("4 corner cameras", "corners")
+        self._boundary_source.addItem("All cameras", "all")
+        self._boundary_source.addItem("Interest area", "rigid_body")
         self._boundary_source.setToolTip(
             "4 corner cameras: rectangular room - floor spans the 4 corner cameras.\n"
             "All cameras: any layout (circular rig, fewer cameras) - floor is the\n"
             "outline of all cameras, with one edge (and wall) per outline segment.\n"
-            f"'{BOUNDARY_BODY_NAME}' rigid body: an interest area marked in Motive by a\n"
-            "rigid body with that name and markers on the floor at its corners."
+            f"Interest area: the outline of a rigid body named '{BOUNDARY_BODY_NAME}'\n"
+            "in Motive, with markers on the floor at the area's corners.\n"
+            "See README / docs for details."
         )
         self._boundary_source.currentIndexChanged.connect(
             lambda _i: self._rebuild_geometry()
@@ -313,6 +313,7 @@ class MainWindow(QMainWindow):
         self._wall_height_spin.setSingleStep(0.1)
         self._wall_height_spin.setDecimals(1)
         self._wall_height_spin.setEnabled(False)
+        self._wall_height_spin.valueChanged.connect(lambda _v: self._rebuild_geometry())
         height_row.addWidget(self._wall_height_spin)
         layout.addLayout(height_row)
 
@@ -324,6 +325,9 @@ class MainWindow(QMainWindow):
         self._radio_outward.setChecked(True)
         self._radio_outward.setEnabled(False)
         self._radio_inward.setEnabled(False)
+        # One toggled signal per switch is enough (both buttons fire); react
+        # only to the one becoming checked.
+        self._radio_inward.toggled.connect(lambda _c: self._rebuild_geometry())
         direction_row.addWidget(QLabel("Direction:"))
         direction_row.addWidget(self._radio_outward)
         direction_row.addWidget(self._radio_inward)
@@ -360,6 +364,12 @@ class MainWindow(QMainWindow):
         menubar = self.menuBar()
 
         file_menu = menubar.addMenu("File")
+        act_open = QAction("Open session…", self)
+        act_open.setShortcut("Ctrl+O")
+        act_open.setStatusTip("View a previously exported session (scene.json + STLs)")
+        act_open.triggered.connect(self._on_open_session)
+        file_menu.addAction(act_open)
+
         act_export = QAction("Export scene…", self)
         act_export.setShortcut("Ctrl+S")
         act_export.triggered.connect(self._on_export)
@@ -369,6 +379,17 @@ class MainWindow(QMainWindow):
         act_quit.setShortcut("Ctrl+Q")
         act_quit.triggered.connect(self.close)
         file_menu.addAction(act_quit)
+
+        # Development aids — not needed for normal use
+        dev_menu = menubar.addMenu("Dev")
+        self._act_mock = QAction("Load mock scene", self)
+        self._act_mock.setCheckable(True)
+        self._act_mock.setStatusTip(
+            "Toggle built-in sample data (3 obstacles, 4 cameras) to try the tool "
+            "without OptiTrack. Not a saved session."
+        )
+        self._act_mock.toggled.connect(self._on_mock_toggled)
+        dev_menu.addAction(self._act_mock)
 
         help_menu = menubar.addMenu("Help")
         act_about = QAction("About", self)
@@ -381,21 +402,25 @@ class MainWindow(QMainWindow):
 
     def _update_ui_state(self):
         """Enable/disable widgets based on connection and data state."""
-        connected   = self._client is not None
+        mock        = isinstance(self._client, MockNatNetConnection)
+        live        = self._client is not None and not mock
+        viewing     = self._session is not None
         has_hulls   = bool(self._hulls)
         worker_busy = self._worker is not None and self._worker.isRunning()
 
-        self._btn_connect.setEnabled(not connected and not worker_busy)
-        self._btn_disconnect.setEnabled(connected)
-        self._btn_refresh.setEnabled(connected and not worker_busy)
-        self._ip_input.setEnabled(not connected)
-        self._btn_export.setEnabled(has_hulls)
+        # Connect also replaces a mock scene / opened session
+        self._btn_connect.setEnabled(not live and not worker_busy)
+        self._btn_disconnect.setEnabled(live or mock or viewing)
+        self._btn_refresh.setEnabled(live and not worker_busy)
+        self._ip_input.setEnabled(not live)
+        # A saved session has no markers: nothing to recompute or re-export
+        self._btn_export.setEnabled(has_hulls and not viewing)
+        self._convention_group.setEnabled(not viewing)
+        self._boundary_group.setEnabled(not viewing)
 
-        # Status dot colour
-        if connected:
-            self._status_dot.setStyleSheet("color: #27ae60; font-size: 14px;")
-        else:
-            self._status_dot.setStyleSheet("color: #c0392b; font-size: 14px;")
+        # Status dot colour: live green, mock amber, saved session blue
+        colour = "#27ae60" if live else "#f39c12" if mock else "#2e86de" if viewing else "#c0392b"
+        self._status_dot.setStyleSheet(f"color: {colour}; font-size: 14px;")
 
     def _set_status(self, message: str):
         self._status_label.setText(message)
@@ -412,24 +437,38 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Missing IP", "Enter the OptiTrack PC IP address.")
             return
 
+        self._clear_scene()   # drop a mock scene / opened session first
         self._client = NatNetConnection(server_ip=ip)
         self._set_status(f"Connecting to {ip}…")
         self._start_worker(_ConnectWorker(self._client))
 
     @pyqtSlot()
     def _on_disconnect(self):
+        self._clear_scene("Disconnected.")
+
+    def _clear_scene(self, status: str | None = None):
+        """
+        Return to the empty state: disconnect any client (live or mock), close
+        an opened session, clear the views, untick Dev → Load mock scene.
+        """
         self._live_timer.stop()
         if self._client:
             self._client.disconnect()
             self._client = None
-        self._raw_frame   = None
-        self._world_frame = None
-        self._hulls       = {}
-        self._boundary    = None
+        self._raw_frame      = None
+        self._world_frame    = None
+        self._hulls          = {}
+        self._skipped_bodies = []
+        self._boundary       = None
+        self._session        = None
         self._obstacle_table.clear()
         self._viewport.clear()
         self._connection_label.setText("Not connected")
-        self._set_status("Disconnected.")
+        self._act_mock.blockSignals(True)
+        self._act_mock.setChecked(False)
+        self._act_mock.blockSignals(False)
+        if status:
+            self._set_status(status)
         self._update_ui_state()
 
     @pyqtSlot()
@@ -439,25 +478,89 @@ class MainWindow(QMainWindow):
         self._set_status("Capturing fresh frame…")
         self._start_worker(_CaptureWorker(self._client))
 
+    @pyqtSlot(bool)
+    def _on_mock_toggled(self, checked: bool):
+        """Dev → Load mock scene is a toggle: ticked = mock scene shown."""
+        if checked:
+            self._on_load_mock()
+        else:
+            self._clear_scene("Mock scene removed.")
+
     @pyqtSlot()
     def _on_load_mock(self):
-        """Load the fixture file for offline development."""
+        """Load the built-in mock scene (test fixture) for offline development."""
+        self._clear_scene()
         fixture = Path(__file__).parents[3] / "tests" / "fixtures" / "sample_scene.json"
         if not fixture.exists():
             QMessageBox.warning(
-                self, "Fixture not found",
+                self, "Mock scene not found",
                 f"Could not find:\n{fixture}"
             )
+            self._update_ui_state()
             return
         self._client = MockNatNetConnection(str(fixture))
         self._client.connect()
         frame = self._client.capture_frame()
         if frame:
             self._on_frame_ready(frame)
-            self._connection_label.setText("Mock fixture loaded")
+            self._connection_label.setText("Mock scene loaded")
             self._status_dot.setStyleSheet("color: #f39c12; font-size: 14px;")  # amber
-            self._set_status("Loaded fixture data (offline mode).")
+            self._set_status("Loaded mock scene (built-in sample data, offline).")
+            self._act_mock.blockSignals(True)
+            self._act_mock.setChecked(True)
+            self._act_mock.blockSignals(False)
         self._update_ui_state()
+
+    @pyqtSlot()
+    def _on_open_session(self):
+        """File → Open session: show a previously exported session (read-only)."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open session — choose its scene.json", str(Path.home()),
+            "Session (scene.json);;JSON files (*.json)",
+        )
+        if path:
+            self.open_session(Path(path))
+
+    def open_session(self, path: Path) -> bool:
+        """Load and display a saved session (directory or scene.json)."""
+        try:
+            session = load_session(path)
+        except (OSError, ValueError) as e:
+            logger.exception("Could not open session")
+            QMessageBox.critical(self, "Could not open session", str(e))
+            return False
+
+        self._clear_scene()
+        self._session = session
+        self._hulls   = dict(session.hulls)
+        self._boundary = session.boundary
+        self._obstacle_table.update_from_hulls(
+            self._hulls, session.bodies, marker_counts=session.marker_counts,
+        )
+        self._viewport.update_scene(
+            self._hulls,
+            self._boundary,
+            show_boundary = self._chk_show_boundary.isChecked(),
+            bodies        = session.bodies,
+            cameras       = self._boundary.corner_cameras if self._boundary else [],
+        )
+        name = session.session_dir.name
+        self._connection_label.setText(f"Viewing session: {name}")
+        n = len(self._hulls)
+        note = ""
+        if session.scene.get("convention") == "y_up":
+            note = " — saved Y-up, shown as stored (preview assumes Z-up)"
+        self._set_status(
+            f"Opened {name} — {n} obstacle{'' if n == 1 else 's'} (read-only){note}"
+        )
+        self._update_ui_state()
+        return True
+
+    def _current_bodies(self) -> list:
+        """Rigid bodies behind the current hulls (live/mock frame or session)."""
+        if self._session is not None:
+            return self._session.bodies
+        return self._world_frame.rigid_bodies if self._world_frame else []
 
     # ------------------------------------------------------------------
     # Worker management
@@ -622,15 +725,18 @@ class MainWindow(QMainWindow):
         self._hulls[new_name] = hull
 
         # Also update the rigid body name so scene.json is consistent
-        for body in (self._world_frame.rigid_bodies if self._world_frame else []):
+        for body in self._current_bodies():
             if body.name == old_name:
                 body.name = new_name
                 break
 
+        # Pass the bodies so the viewport re-keys its poses to the new name
+        # (otherwise the renamed hull would be drawn at the origin)
         self._viewport.update_scene(
             self._hulls,
             self._boundary,
             show_boundary = self._chk_show_boundary.isChecked(),
+            bodies        = self._current_bodies(),
         )
         self._set_status(f"Renamed '{old_name}' → '{new_name}'")
 
