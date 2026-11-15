@@ -243,3 +243,30 @@ def test_reconstruct_stop_and_disconnect(win, tmp_path):
     win.start_reconstruction(session_dir)
     win._btn_disconnect.click()
     assert win._recon_session is None and win._recon_group.isHidden()
+
+
+# ---------------------------------------------------------------------------
+# Viewport navigation
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("azimuth", [0.0, 45.0, 90.0, 180.0, -135.0])
+def test_pan_moves_the_scene_with_the_mouse(azimuth):
+    """Whichever way the camera faces, a drag right/down moves the scene right/down."""
+    import numpy as np
+    from scipy.spatial.transform import Rotation
+
+    from obstacle_builder.gui.viewport import _pan_step
+
+    elevation = 30.0
+    # paintGL: eye = Rx(-elevation) · Rz(azimuth) · (world - pan)
+    view = (Rotation.from_euler("x", -elevation, degrees=True)
+            * Rotation.from_euler("z", azimuth, degrees=True))
+
+    def on_screen(pan):            # where the world origin appears (eye x right, eye y up)
+        return view.apply(-np.array([*pan, 0.0]))[:2]
+
+    start = on_screen((0.0, 0.0))
+    right = on_screen(_pan_step(10, 0, azimuth, 0.01)) - start
+    down  = on_screen(_pan_step(0, 10, azimuth, 0.01)) - start
+    assert right[0] > 0 and right[1] == pytest.approx(0, abs=1e-9)
+    assert down[1] < 0 and down[0] == pytest.approx(0, abs=1e-9)

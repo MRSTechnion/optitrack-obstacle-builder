@@ -95,6 +95,20 @@ _GRID_SIZE       = 3.0                      # half-extent of floor grid
 _GRID_STEP       = 0.5                      # grid spacing in metres
 
 
+def _pan_step(dx: float, dy: float, azimuth_deg: float, scale: float) -> tuple[float, float]:
+    """
+    Change of the pan point (world X, Y) for a mouse drag of (dx, dy) pixels,
+    so the floor moves with the mouse whichever way the camera faces. The
+    camera turns by `azimuth_deg` about Z: on screen, right is world
+    (cos a, -sin a) and up (away from the viewer) is world (sin a, cos a).
+    """
+    a = math.radians(azimuth_deg)
+    right = (math.cos(a), -math.sin(a))
+    up    = (math.sin(a),  math.cos(a))
+    return (scale * (-dx * right[0] + dy * up[0]),
+            scale * (-dx * right[1] + dy * up[1]))
+
+
 def _to_world(point, position, quaternion) -> tuple[float, float, float]:
     """A body-frame point placed at a (position, quaternion [x, y, z, w]) pose."""
     x, y, z = Rotation.from_quat(quaternion).apply(point) + np.asarray(position)
@@ -552,10 +566,10 @@ class Viewport3D(QOpenGLWidget):
             self._elevation  = max(-89.0, min(89.0, self._elevation + dy * 0.5))
 
         elif self._mouse_btn == Qt.MouseButton.LeftButton:
-            # Pan — scale by distance so panning feels consistent at any zoom
-            pan_scale = self._distance * 0.002
-            self._pan_x -= dx * pan_scale
-            self._pan_y += dy * pan_scale
+            # Pan: the scene follows the mouse, along the floor
+            px, py = _pan_step(dx, dy, self._azimuth, self._distance * 0.002)
+            self._pan_x += px
+            self._pan_y += py
 
         self.update()
 
