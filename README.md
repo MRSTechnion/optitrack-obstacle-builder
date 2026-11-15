@@ -106,6 +106,8 @@ To rebuild an experiment setup from a saved session, connect to Motive
 and choose **File → Reconstruct setup…** (Ctrl+R), then the session's
 `scene.json`. Each obstacle is shown twice:
 
+![Reconstructing a setup: one obstacle in place, one to move, one not tracked, one not in the session](docs/images/reconstruct.png)
+
 - **dashed outline**: where it was when the session was exported
 - **solid shape**: where it is now, **green** when it is back in place,
   **red** when not, with a white line to where it belongs
@@ -128,7 +130,9 @@ markers, same pivot. Keep the Motive project or its rigid body assets
 between sessions.
 
 Without Motive, **Dev → Load mock scene** works as a stand-in for the live
-scene, for trying the mode out.
+scene. To try the mode out, load it and reconstruct
+`examples/reconstruct_demo/scene.json`, a session saved from the mock scene
+and then edited to show every state, as in the picture above.
 
 ## Use in Gazebo
 

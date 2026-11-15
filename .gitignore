@@ -29,6 +29,8 @@ Thumbs.db
 sessions/
 *.stl
 scene.json
+# …except the example session shipped for the README
+!examples/reconstruct_demo/**
 
 # Test cache
 .pytest_cache/

@@ -5,6 +5,7 @@ GUI behaviour tests (headless: Qt offscreen platform). No hardware.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -216,6 +217,19 @@ def test_reconstruct_shows_live_obstacle_not_in_session(win, tmp_path):
     assert win._viewport._status_colours[name] == STATUS_COLOURS[State.EXTRA]
     assert win._placement_table._names[-1] == name
     assert win._recon_summary.text() == "2 / 3 in place · 1 extra"
+
+
+def test_reconstruct_demo_example_shows_every_state(win):
+    """examples/reconstruct_demo (README) against the mock scene."""
+    from obstacle_builder.reconstruct import State
+    demo = Path(__file__).parents[1] / "examples" / "reconstruct_demo"
+    win._act_mock.trigger()
+    assert win.start_reconstruction(demo / "scene.json")
+    assert {n: p.state for n, p in win._placements.items()} == {
+        "wall_left": State.MISPLACED, "crate": State.MISSING,
+        "ramp_a": State.PLACED, "pillar_1": State.EXTRA,
+    }
+    assert win._recon_summary.text() == "1 / 3 in place · 1 extra"
 
 
 def test_reconstruct_stop_and_disconnect(win, tmp_path):

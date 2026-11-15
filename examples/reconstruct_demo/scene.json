@@ -1,0 +1,145 @@
+{
+  "version": "1.0",
+  "convention": "z_up",
+  "origin": "optitrack",
+  "units": "metres",
+  "created": "2026-11-15T10:13:51",
+  "notes": "Demo for File > Reconstruct setup, with Dev > Load mock scene as the live scene: wall_left was elsewhere, ramp_a is in place, crate is not tracked, pillar_1 is not in this session.",
+  "models": [
+    {
+      "name": "wall_left",
+      "stl": "models/wall_left.stl",
+      "position": [
+        1.2,
+        -1.1,
+        0.0
+      ],
+      "quaternion": [
+        0.704416,
+        0.061628,
+        0.061628,
+        0.704416
+      ],
+      "type": "obstacle",
+      "marker_count": 8,
+      "hull_volume_m3": 0.072,
+      "dimensions_m": [
+        0.9,
+        0.8,
+        0.1
+      ]
+    },
+    {
+      "name": "crate",
+      "stl": "models/crate.stl",
+      "position": [
+        -1.0,
+        0.3,
+        0.0
+      ],
+      "quaternion": [
+        0.707107,
+        0.0,
+        0.0,
+        0.707107
+      ],
+      "type": "obstacle",
+      "marker_count": 6,
+      "hull_volume_m3": 0.045,
+      "dimensions_m": [
+        0.2,
+        0.5,
+        0.9
+      ]
+    },
+    {
+      "name": "ramp_a",
+      "stl": "models/ramp_a.stl",
+      "position": [
+        0.4,
+        0.6,
+        0.0
+      ],
+      "quaternion": [
+        0.701059,
+        0.092282,
+        0.092282,
+        0.701059
+      ],
+      "type": "obstacle",
+      "marker_count": 6,
+      "hull_volume_m3": 0.0625,
+      "dimensions_m": [
+        0.612358,
+        0.5,
+        0.482968
+      ]
+    }
+  ],
+  "boundary": {
+    "stl": "models/boundary.stl",
+    "type": "boundary",
+    "mode": "corners",
+    "position": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "quaternion": [
+      0.0,
+      0.0,
+      0.0,
+      1.0
+    ],
+    "room_dimensions": {
+      "width_x": 6.0,
+      "depth_y": 4.0,
+      "height_z": 3.1
+    },
+    "wall_extrusion": null,
+    "floor_polygon": [
+      [
+        -3.0,
+        -2.0,
+        0.0
+      ],
+      [
+        3.0,
+        -2.0,
+        0.0
+      ],
+      [
+        3.0,
+        2.0,
+        0.0
+      ],
+      [
+        -3.0,
+        2.0,
+        0.0
+      ]
+    ],
+    "corner_camera_positions": [
+      [
+        -3.0,
+        2.0,
+        3.1
+      ],
+      [
+        3.0,
+        2.0,
+        3.1
+      ],
+      [
+        3.0,
+        -2.0,
+        3.1
+      ],
+      [
+        -3.0,
+        -2.0,
+        3.1
+      ]
+    ]
+  }
+}
