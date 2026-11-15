@@ -100,6 +100,34 @@ boundary's corners are highlighted. After changing rigid bodies in Motive
 
 See `docs/scene_json_spec.md` for how the boundary is stored.
 
+## Reconstruct a setup
+
+To rebuild an experiment setup from a saved session, connect to Motive
+and choose **File → Reconstruct setup…** (Ctrl+R), then the session's
+`scene.json`. Each obstacle is shown twice:
+
+- **dashed outline**: where it was when the session was exported
+- **solid shape**: where it is now, **green** when it is back in place,
+  **red** when not, with a white line to where it belongs
+
+An obstacle that Motive does not track right now is shown only as a grey
+dashed outline.
+
+The sidebar lists each obstacle with how far to move it (cm) and turn it
+(°). Hover over the distance for the direction, e.g. `+x 12 cm, -y 3 cm`.
+**Within** sets when an obstacle counts as in place (default 2 cm and 2°),
+and the summary shows e.g. `2 / 3 in place`. **Stop** returns to the live
+view.
+
+Distances are measured at the obstacle's centre. Obstacles are matched by
+rigid body name and drawn with the saved shapes, so each obstacle must be
+the **same rigid body** in Motive as when it was exported: same name, same
+markers, same pivot. Keep the Motive project or its rigid body assets
+between sessions.
+
+Without Motive, **Dev → Load mock scene** works as a stand-in for the live
+scene, for trying the mode out.
+
 ## Use in Gazebo
 
 Turn an exported session into a Gazebo world:

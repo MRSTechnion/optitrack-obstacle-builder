@@ -7,6 +7,9 @@ Renders:
   - Obstacle convex hulls (coloured, semi-transparent faces + wireframe)
   - Selected obstacle highlighted with brighter colour and outline
   - Camera positions as small dots (optional)
+  - Reconstruction (set_targets): each obstacle's saved pose as a ghost
+    (wireframe), the live obstacle in its status colour, and a line from
+    the live obstacle to where it belongs
 
 Navigation:
   - Left-drag   : pan
@@ -34,6 +37,7 @@ from OpenGL.GL import (
     GL_LINE,
     GL_LINE_LOOP,
     GL_LINE_SMOOTH,
+    GL_LINE_STIPPLE,
     GL_LINES,
     GL_MODELVIEW,
     GL_ONE_MINUS_SRC_ALPHA,
@@ -51,6 +55,7 @@ from OpenGL.GL import (
     glDisable,
     glEnable,
     glEnd,
+    glLineStipple,
     glLineWidth,
     glLoadIdentity,
     glMatrixMode,
@@ -68,6 +73,7 @@ from OpenGL.GLU import gluPerspective
 from PyQt6.QtCore import QPoint, Qt
 from PyQt6.QtGui import QMouseEvent, QWheelEvent
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+from scipy.spatial.transform import Rotation
 
 from ..geometry.hull import BoundaryResult, HullResult
 
@@ -89,6 +95,12 @@ _GRID_SIZE       = 3.0                      # half-extent of floor grid
 _GRID_STEP       = 0.5                      # grid spacing in metres
 
 
+def _to_world(point, position, quaternion) -> tuple[float, float, float]:
+    """A body-frame point placed at a (position, quaternion [x, y, z, w]) pose."""
+    x, y, z = Rotation.from_quat(quaternion).apply(point) + np.asarray(position)
+    return float(x), float(y), float(z)
+
+
 class Viewport3D(QOpenGLWidget):
 
     def __init__(self, parent=None):
@@ -107,6 +119,12 @@ class Viewport3D(QOpenGLWidget):
 
         # Colour assignment — stable across updates
         self._colour_map: dict[str, tuple] = {}
+
+        # Reconstruction: target pose per obstacle (name → (position, quaternion))
+        # and a status colour per obstacle that overrides the palette. Empty =
+        # normal view.
+        self._targets: dict[str, tuple] = {}
+        self._status_colours: dict[str, tuple] = {}
 
         # All camera positions (world frame) — drawn as small dim dots; the
         # ones at the boundary polygon's vertices are drawn brighter on top.
@@ -178,6 +196,22 @@ class Viewport3D(QOpenGLWidget):
         }
         self.update()
 
+    def set_targets(self, targets: dict[str, tuple] | None):
+        """
+        Show where each obstacle belongs (name → (position, quaternion)), or
+        None to leave reconstruction. While targets are set, obstacles with
+        no live pose (not tracked) are drawn only as their target ghost.
+        """
+        self._targets = dict(targets or {})
+        if not self._targets:
+            self._status_colours = {}
+        self.update()
+
+    def set_status_colours(self, colours: dict[str, tuple]):
+        """Per-obstacle RGB colours (0-1) that replace the palette colour."""
+        self._status_colours = dict(colours)
+        self.update()
+
     def set_selected(self, name: str | None):
         """Highlight the named obstacle (or clear selection if None)."""
         self._selected = name
@@ -193,6 +227,8 @@ class Viewport3D(QOpenGLWidget):
         self._selected    = None
         self._colour_map.clear()
         self._poses.clear()
+        self._targets.clear()
+        self._status_colours.clear()
         self.update()
 
     # ------------------------------------------------------------------
@@ -234,9 +270,20 @@ class Viewport3D(QOpenGLWidget):
             self._draw_boundary(self._boundary)
 
         for name, hull in self._hulls.items():
-            colour    = self._colour_map.get(name, _COLOURS[0])
+            colour    = self._status_colours.get(name) or self._colour_map.get(name, _COLOURS[0])
             selected  = (name == self._selected)
+            pose      = self._poses.get(name)
+            if name in self._targets:
+                self._draw_ghost(hull, colour, self._targets[name])
+                if pose is None:
+                    continue                  # not tracked: only the target
             self._draw_hull(hull, colour, selected)
+
+        # Guide lines last, over everything
+        for name, hull in self._hulls.items():
+            if name in self._targets and name in self._poses:
+                colour = self._status_colours.get(name) or self._colour_map.get(name, _COLOURS[0])
+                self._draw_guide(hull, colour, self._poses[name], self._targets[name])
 
     # ------------------------------------------------------------------
     # Drawing helpers
@@ -386,6 +433,37 @@ class Viewport3D(QOpenGLWidget):
 
         glPopMatrix()
 
+    def _draw_ghost(self, hull: HullResult, colour: tuple, pose: tuple):
+        """The obstacle at its target pose: a dashed outline, no fill."""
+        r, g, b = colour
+        glPushMatrix()
+        self._apply_pose(pose)
+        glEnable(GL_LINE_STIPPLE)
+        glLineStipple(2, 0x0F0F)                  # dashes
+        glLineWidth(2.0)
+        glColor4f(min(r * 1.3, 1.0), min(g * 1.3, 1.0), min(b * 1.3, 1.0), 1.0)
+        self._draw_wireframe(hull.vertices, hull.faces)
+        glDisable(GL_LINE_STIPPLE)
+        glPopMatrix()
+
+    def _draw_guide(self, hull: HullResult, colour: tuple, live: tuple, target: tuple):
+        """A line from the live obstacle's centre to its target's centre."""
+        centre = np.asarray(hull.vertices, dtype=float).mean(axis=0)
+        a, b = (_to_world(centre, *live), _to_world(centre, *target))
+        glDisable(GL_DEPTH_TEST)                  # visible through the obstacles
+        glLineWidth(2.5)
+        glColor4f(1.0, 1.0, 1.0, 0.9)
+        glBegin(GL_LINES)
+        glVertex3f(*a)
+        glVertex3f(*b)
+        glEnd()
+        glPointSize(9.0)
+        glColor4f(*colour, 1.0)
+        glBegin(GL_POINTS)
+        glVertex3f(*b)                            # where its centre belongs
+        glEnd()
+        glEnable(GL_DEPTH_TEST)
+
     def _apply_body_pose(self, name: str):
         """
         Apply the world-space pose of the named body as a GL transform.
@@ -398,9 +476,12 @@ class Viewport3D(QOpenGLWidget):
         the hull renders at the world origin.
         """
         pose = self._poses.get(name)
-        if pose is None:
-            return
+        if pose is not None:
+            self._apply_pose(pose)
 
+    @staticmethod
+    def _apply_pose(pose: tuple):
+        """Apply a (position, quaternion) pose as a GL transform."""
         position, quaternion = pose
         px, py, pz           = position
         qx, qy, qz, qw       = quaternion

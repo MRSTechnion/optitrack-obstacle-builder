@@ -13,6 +13,11 @@ Layout:
     │                             │   - Export       │
     └─────────────────────────────┴──────────────────┘
 
+Reconstruct mode (File → Reconstruct setup…, while connected): a saved
+session's obstacles are shown where they belong, each live obstacle green
+when it is back in place and red when not; the sidebar's Reconstruct group
+replaces Obstacles and Export.
+
 The window owns:
   - NatNetConnection (or Mock) instance
   - The latest converted Frame
@@ -57,8 +62,17 @@ from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary
 from ..geometry.transform import convert_frame
 from ..natnet.client import MockNatNetConnection, NatNetConnection
 from ..natnet.types import Frame
+from ..reconstruct import (
+    ANGLE_TOL_DEG,
+    POSITION_TOL_M,
+    State,
+    check_placement,
+    summary,
+    targets_from_session,
+)
 from ..scene.scene_writer import build_session, export_session, load_session
 from .obstacle_table import ObstacleTable
+from .placement_table import STATUS_COLOURS, PlacementTable
 from .viewport import Viewport3D
 
 logger = logging.getLogger(__name__)
@@ -137,6 +151,10 @@ class MainWindow(QMainWindow):
         self._session = None       # LoadedSession or None
         self._z_up   = True        # current axis convention
         self._worker: QThread | None = None
+        # Reconstruct mode: the saved session being rebuilt and its targets
+        self._recon_session = None  # LoadedSession or None
+        self._recon_targets = {}    # name → reconstruct.Target
+        self._placements    = {}    # name → reconstruct.Placement (latest check)
 
         # --- Build UI -------------------------------------------------------
         self._build_ui()
@@ -247,15 +265,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._boundary_group)
 
         # Obstacle table takes remaining space
-        obs_group = QGroupBox("Obstacles")
-        obs_layout = QVBoxLayout(obs_group)
+        self._obstacles_group = QGroupBox("Obstacles")
+        obs_layout = QVBoxLayout(self._obstacles_group)
         self._obstacle_table = ObstacleTable(self)
         self._obstacle_table.selection_changed.connect(self._on_obstacle_selected)
         self._obstacle_table.name_changed.connect(self._on_obstacle_renamed)
         obs_layout.addWidget(self._obstacle_table)
-        layout.addWidget(obs_group, stretch=1)
+        layout.addWidget(self._obstacles_group, stretch=1)
 
-        layout.addWidget(self._build_export_group())
+        # Shown instead of Obstacles + Export while reconstructing
+        self._recon_group = self._build_reconstruct_group()
+        self._recon_group.setVisible(False)
+        layout.addWidget(self._recon_group, stretch=1)
+
+        self._export_group = self._build_export_group()
+        layout.addWidget(self._export_group)
         return sidebar
 
     def _build_convention_group(self) -> QGroupBox:
@@ -342,6 +366,50 @@ class MainWindow(QMainWindow):
 
         return group
 
+    def _build_reconstruct_group(self) -> QGroupBox:
+        group = QGroupBox("Reconstruct")
+        layout = QVBoxLayout(group)
+
+        self._recon_name = QLabel("")
+        self._recon_name.setWordWrap(True)
+        layout.addWidget(self._recon_name)
+
+        tol_row = QHBoxLayout()
+        tol_row.addWidget(QLabel("Within:"))
+        self._recon_pos_tol = QDoubleSpinBox()
+        self._recon_pos_tol.setRange(0.5, 50.0)
+        self._recon_pos_tol.setDecimals(1)
+        self._recon_pos_tol.setSingleStep(0.5)
+        self._recon_pos_tol.setValue(POSITION_TOL_M * 100)
+        self._recon_pos_tol.setSuffix(" cm")
+        self._recon_angle_tol = QDoubleSpinBox()
+        self._recon_angle_tol.setRange(0.5, 45.0)
+        self._recon_angle_tol.setDecimals(1)
+        self._recon_angle_tol.setSingleStep(0.5)
+        self._recon_angle_tol.setValue(ANGLE_TOL_DEG)
+        self._recon_angle_tol.setSuffix(" °")
+        for spin in (self._recon_pos_tol, self._recon_angle_tol):
+            spin.valueChanged.connect(lambda _v: self._update_reconstruction())
+            tol_row.addWidget(spin)
+        layout.addLayout(tol_row)
+
+        self._placement_table = PlacementTable(self)
+        self._placement_table.selection_changed.connect(self._on_obstacle_selected)
+        layout.addWidget(self._placement_table, stretch=1)
+
+        self._recon_summary = QLabel("")
+        self._recon_summary.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = self._recon_summary.font()
+        font.setBold(True)
+        font.setPointSize(font.pointSize() + 2)
+        self._recon_summary.setFont(font)
+        layout.addWidget(self._recon_summary)
+
+        self._btn_recon_stop = QPushButton("Stop")
+        self._btn_recon_stop.clicked.connect(self._stop_reconstruction)
+        layout.addWidget(self._btn_recon_stop)
+        return group
+
     def _build_export_group(self) -> QGroupBox:
         group = QGroupBox("Export")
         layout = QVBoxLayout(group)
@@ -391,6 +459,14 @@ class MainWindow(QMainWindow):
         act_open.triggered.connect(self._on_open_session)
         file_menu.addAction(act_open)
 
+        self._act_reconstruct = QAction("Reconstruct setup…", self)
+        self._act_reconstruct.setShortcut("Ctrl+R")
+        self._act_reconstruct.setStatusTip(
+            "Put a saved session's obstacles back in place: green = in place, red = not"
+        )
+        self._act_reconstruct.triggered.connect(self._on_reconstruct)
+        file_menu.addAction(self._act_reconstruct)
+
         act_export = QAction("Export scene…", self)
         act_export.setShortcut("Ctrl+S")
         act_export.triggered.connect(self._on_export)
@@ -426,18 +502,24 @@ class MainWindow(QMainWindow):
         mock        = isinstance(self._client, MockNatNetConnection)
         live        = self._client is not None and not mock
         viewing     = self._session is not None
+        recon       = self._recon_session is not None
         has_hulls   = bool(self._hulls)
         worker_busy = self._worker is not None and self._worker.isRunning()
 
         # Connect also replaces a mock scene / opened session
         self._btn_connect.setEnabled(not live and not worker_busy)
         self._btn_disconnect.setEnabled(live or mock or viewing)
-        self._btn_refresh.setEnabled(live and not worker_busy)
+        self._btn_refresh.setEnabled(live and not worker_busy and not recon)
         self._ip_input.setEnabled(not live)
         # A saved session has no markers: nothing to recompute or re-export
-        self._btn_export.setEnabled(has_hulls and not viewing)
-        self._convention_group.setEnabled(not viewing)
-        self._boundary_group.setEnabled(not viewing)
+        self._btn_export.setEnabled(has_hulls and not viewing and not recon)
+        self._convention_group.setEnabled(not viewing and not recon)
+        self._boundary_group.setEnabled(not viewing and not recon)
+        # Reconstruct needs live poses (Motive, or the mock scene for testing)
+        self._act_reconstruct.setEnabled((live or mock) and not worker_busy)
+        self._obstacles_group.setVisible(not recon)
+        self._export_group.setVisible(not recon)
+        self._recon_group.setVisible(recon)
 
         # Status dot colour: live green, mock amber, saved session blue
         colour = "#27ae60" if live else "#f39c12" if mock else "#2e86de" if viewing else "#c0392b"
@@ -473,6 +555,7 @@ class MainWindow(QMainWindow):
         an opened session, clear the views, untick Dev → Load mock scene.
         """
         self._live_timer.stop()
+        self._end_reconstruction()
         if self._client:
             self._client.disconnect()
             self._client = None
@@ -576,6 +659,96 @@ class MainWindow(QMainWindow):
         )
         self._update_ui_state()
         return True
+
+    # ------------------------------------------------------------------
+    # Reconstruct mode
+    # ------------------------------------------------------------------
+
+    @pyqtSlot()
+    def _on_reconstruct(self):
+        """File → Reconstruct setup: choose the session to put back in place."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Reconstruct — choose the session's scene.json", str(Path.home()),
+            "Session (scene.json);;JSON files (*.json)",
+        )
+        if path:
+            self.start_reconstruction(Path(path))
+
+    def start_reconstruction(self, path: Path) -> bool:
+        """
+        Show a saved session's obstacles where they belong and compare them
+        with the live scene. Needs a connection (or the mock scene).
+        """
+        if self._client is None:
+            QMessageBox.warning(self, "Not connected",
+                                "Connect to Motive first: reconstruction compares live poses.")
+            return False
+        try:
+            session = load_session(path)
+        except (OSError, ValueError) as e:
+            logger.exception("Could not open session")
+            QMessageBox.critical(self, "Could not open session", str(e))
+            return False
+
+        self._recon_session = session
+        self._recon_targets = targets_from_session(session)
+        self._recon_name.setText(f"Session: {session.session_dir.name}")
+        self._placement_table.clear_rows()
+        self._viewport.set_selected(None)
+        self._viewport.update_scene(
+            dict(session.hulls), session.boundary,
+            show_boundary = self._chk_show_boundary.isChecked(),
+            cameras       = session.boundary.corner_cameras if session.boundary else [],
+        )
+        self._viewport.update_poses([])          # live poses come from the next update
+        self._viewport.set_targets({
+            name: (t.position, t.orientation) for name, t in self._recon_targets.items()
+        })
+        self._live_timer.start()                 # also for the mock scene
+        self._update_ui_state()
+        self._update_reconstruction()
+        self._set_status(f"Reconstructing {session.session_dir.name}: "
+                         f"{len(self._recon_targets)} obstacles")
+        return True
+
+    @pyqtSlot()
+    def _stop_reconstruction(self):
+        """Leave reconstruct mode and return to the live scene."""
+        self._end_reconstruction()
+        self._rebuild_geometry()
+        if not isinstance(self._client, NatNetConnection):
+            self._live_timer.stop()              # the mock scene has no live updates
+        self._update_ui_state()
+        self._set_status("Reconstruction stopped.")
+
+    def _end_reconstruction(self):
+        self._recon_session = None
+        self._recon_targets = {}
+        self._placements    = {}
+        self._viewport.set_targets(None)
+        self._placement_table.clear_rows()
+
+    def _update_reconstruction(self):
+        """Compare the latest live frame with the targets and update the views."""
+        if self._recon_session is None or self._client is None:
+            return
+        latest = self._client.latest_frame
+        bodies = convert_frame(latest).rigid_bodies if latest is not None else []
+        placements = check_placement(
+            self._recon_targets, bodies,
+            position_tol = self._recon_pos_tol.value() / 100.0,
+            angle_tol    = self._recon_angle_tol.value(),
+        )
+        tracked = [b for b in bodies
+                   if b.name in self._recon_targets and b.tracking_valid]
+        self._viewport.update_poses(tracked)
+        self._viewport.set_status_colours(
+            {name: STATUS_COLOURS[p.state] for name, p in placements.items()})
+        self._placement_table.show_placements(placements)
+        self._recon_summary.setText(summary(placements))
+        done = all(p.state is State.PLACED for p in placements.values())
+        self._recon_summary.setStyleSheet(f"color: {'#27ae60' if done else '#c0392b'};")
+        self._placements = placements
 
     def _current_bodies(self) -> list:
         """Rigid bodies behind the current hulls (live/mock frame or session)."""
@@ -774,6 +947,9 @@ class MainWindow(QMainWindow):
         the full hull pipeline on every tick.
         """
         if not self._client or not self._client.is_connected:
+            return
+        if self._recon_session is not None:
+            self._update_reconstruction()
             return
         latest = self._client.latest_frame
         if latest is None:
