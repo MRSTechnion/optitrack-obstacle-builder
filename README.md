@@ -360,6 +360,11 @@ See `docs/scene_json_spec.md` for the full `scene.json` schema.
 See `docs/marker_placement_guide.md` for how to place reflective markers
 on physical obstacles so the tool can reconstruct their geometry.
 
+Obstacles are built from the marker centres, so they are accurate to about
+a marker's height (1–2 cm). In particular, they float slightly above the
+floor, since the lowest markers sit a little above it. See the guide's
+*Accuracy* section.
+
 ## Output structure
 
 Each export creates a session folder inside the directory you choose:

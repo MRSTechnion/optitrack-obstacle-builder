@@ -17,10 +17,26 @@ the flat faces.
 | Shape | Min markers | Placement |
 |---|---|---|
 | Box / wall | 8 | One per corner |
-| Thin wall (flat) | 4 | One per corner (produces flat hull — add height manually if needed) |
+| Thin wall | 8 | One per corner, on both faces — 4 on one face are coplanar and give no hull |
 | Cylinder / pillar | 6 | 3 around top ring + 3 around base ring |
 | Ramp / wedge | 6 | Corners of both triangular faces |
 | Irregular shape | 6+ | All outer corners, at least 3 non-collinear per face |
+
+### Accuracy: the hull follows the marker centres
+
+The hull passes through the centres of the markers, not the obstacle's
+surface. A marker's centre sits about its own height off the surface it
+is mounted on (roughly 1–2 cm for common markers on a base), so the hull
+is within about that much of the real object, and:
+
+- **Obstacles float slightly above the floor.** The lowest markers are
+  never at floor level, so the bottom of the hull is a little above
+  `z = 0`.
+- **Faces with markers are pushed out** by the marker height, and **corners
+  without a marker are cut off**.
+
+For planning and collision checks, keep a safety margin of at least a
+marker's height around obstacles.
 
 ### Placement rules
 
