@@ -202,6 +202,22 @@ def test_reconstruct_missing_obstacle_drawn_as_target_only(win, tmp_path):
     assert win._placement_table.item(row, 2).text() == "—"
 
 
+def test_reconstruct_shows_live_obstacle_not_in_session(win, tmp_path):
+    """Renaming in the session leaves the live body unmatched: shown amber, listed."""
+    from obstacle_builder.gui.placement_table import STATUS_COLOURS
+    from obstacle_builder.reconstruct import State
+    session_dir, _ = _shifted_session(win, tmp_path, rename="not_streamed")
+    win.start_reconstruction(session_dir)
+    extra = [n for n, p in win._placements.items() if p.state is State.EXTRA]
+    assert len(extra) == 1
+    name = extra[0]                                    # the renamed obstacle's live body
+    assert name in win._viewport._hulls and name in win._viewport._poses
+    assert name not in win._viewport._targets
+    assert win._viewport._status_colours[name] == STATUS_COLOURS[State.EXTRA]
+    assert win._placement_table._names[-1] == name
+    assert win._recon_summary.text() == "2 / 3 in place · 1 extra"
+
+
 def test_reconstruct_stop_and_disconnect(win, tmp_path):
     session_dir = _export_mock(win, tmp_path)
     win.start_reconstruction(session_dir)

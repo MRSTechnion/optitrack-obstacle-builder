@@ -200,7 +200,8 @@ class Viewport3D(QOpenGLWidget):
         """
         Show where each obstacle belongs (name → (position, quaternion)), or
         None to leave reconstruction. While targets are set, obstacles with
-        no live pose (not tracked) are drawn only as their target ghost.
+        no live pose (not tracked) are drawn only as their target ghost, and
+        hulls that are not targets (extra live obstacles) only when tracked.
         """
         self._targets = dict(targets or {})
         if not self._targets:
@@ -275,8 +276,8 @@ class Viewport3D(QOpenGLWidget):
             pose      = self._poses.get(name)
             if name in self._targets:
                 self._draw_ghost(hull, colour, self._targets[name])
-                if pose is None:
-                    continue                  # not tracked: only the target
+            if self._targets and pose is None:
+                continue                      # reconstructing, not tracked: no live shape
             self._draw_hull(hull, colour, selected)
 
         # Guide lines last, over everything

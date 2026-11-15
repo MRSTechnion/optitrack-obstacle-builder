@@ -58,7 +58,7 @@ from PyQt6.QtWidgets import (
 
 from ..adapters import gazebo
 from ..adapters import octomap as octomap_adapter
-from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary
+from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary, build_hull
 from ..geometry.transform import convert_frame
 from ..natnet.client import MockNatNetConnection, NatNetConnection
 from ..natnet.types import Frame
@@ -67,6 +67,7 @@ from ..reconstruct import (
     POSITION_TOL_M,
     State,
     check_placement,
+    is_complete,
     summary,
     targets_from_session,
 )
@@ -155,6 +156,7 @@ class MainWindow(QMainWindow):
         self._recon_session = None  # LoadedSession or None
         self._recon_targets = {}    # name → reconstruct.Target
         self._placements    = {}    # name → reconstruct.Placement (latest check)
+        self._recon_extra_hulls = {}  # live obstacles not in the session: name → hull or None
 
         # --- Build UI -------------------------------------------------------
         self._build_ui()
@@ -692,6 +694,7 @@ class MainWindow(QMainWindow):
 
         self._recon_session = session
         self._recon_targets = targets_from_session(session)
+        self._recon_extra_hulls = {}
         self._recon_name.setText(f"Session: {session.session_dir.name}")
         self._placement_table.clear_rows()
         self._viewport.set_selected(None)
@@ -725,6 +728,7 @@ class MainWindow(QMainWindow):
         self._recon_session = None
         self._recon_targets = {}
         self._placements    = {}
+        self._recon_extra_hulls = {}
         self._viewport.set_targets(None)
         self._placement_table.clear_rows()
 
@@ -739,16 +743,36 @@ class MainWindow(QMainWindow):
             position_tol = self._recon_pos_tol.value() / 100.0,
             angle_tol    = self._recon_angle_tol.value(),
         )
-        tracked = [b for b in bodies
-                   if b.name in self._recon_targets and b.tracking_valid]
+        self._add_extra_hulls(bodies, placements)
+        tracked = [b for b in bodies if b.tracking_valid and (
+                   b.name in self._recon_targets or self._recon_extra_hulls.get(b.name))]
         self._viewport.update_poses(tracked)
         self._viewport.set_status_colours(
             {name: STATUS_COLOURS[p.state] for name, p in placements.items()})
         self._placement_table.show_placements(placements)
         self._recon_summary.setText(summary(placements))
-        done = all(p.state is State.PLACED for p in placements.values())
+        done = is_complete(placements)
         self._recon_summary.setStyleSheet(f"color: {'#27ae60' if done else '#c0392b'};")
         self._placements = placements
+
+    def _add_extra_hulls(self, bodies: list, placements: dict):
+        """
+        Live obstacles that are not in the session have no saved shape: build
+        each one's hull from its live markers, once, and add it to the view.
+        """
+        live = {b.name: b for b in bodies}
+        new = [name for name, p in placements.items()
+               if p.state is State.EXTRA and name not in self._recon_extra_hulls]
+        if not new:
+            return
+        for name in new:
+            self._recon_extra_hulls[name] = build_hull(live[name])   # None: no hull
+        hulls = dict(self._recon_session.hulls)
+        hulls.update({n: h for n, h in self._recon_extra_hulls.items() if h is not None})
+        self._viewport.update_scene(
+            hulls, self._recon_session.boundary,
+            show_boundary = self._chk_show_boundary.isChecked(),
+        )
 
     def _current_bodies(self) -> list:
         """Rigid bodies behind the current hulls (live/mock frame or session)."""

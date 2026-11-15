@@ -17,6 +17,7 @@ from obstacle_builder.reconstruct import (
     State,
     check_placement,
     describe_move,
+    is_complete,
     summary,
     targets_from_session,
 )
@@ -106,8 +107,21 @@ def test_missing_untracked_and_extra_bodies(session, targets):
     assert p[a.name].state is State.MISSING and p[a.name].move is None
     assert p[b.name].state is State.MISSING                    # streamed but not tracked
     assert p[c.name].state is State.PLACED
-    assert "not_in_session" not in p
-    assert summary(p) == "1 / 3 in place"
+    assert p["not_in_session"].state is State.EXTRA            # tracked, not a target
+    assert list(p)[-1] == "not_in_session"                     # after the targets
+    assert summary(p) == "1 / 3 in place · 1 extra"
+    assert not is_complete(p)
+
+
+def test_extra_body_keeps_the_setup_incomplete(session, targets):
+    bodies = list(session.bodies)
+    untracked = replace(bodies[0], name="untracked_extra", tracking_valid=False)
+    boundary = replace(bodies[0], name="Boundary")
+    p = check_placement(targets, [*bodies, untracked, boundary])
+    assert "untracked_extra" not in p and "Boundary" not in p
+    assert is_complete(p) and summary(p) == "All 3 in place"
+    p = check_placement(targets, [*bodies, replace(bodies[0], name="added")])
+    assert not is_complete(p) and summary(p) == "All 3 in place · 1 extra"
 
 
 def test_describe_move_ignores_millimetres():

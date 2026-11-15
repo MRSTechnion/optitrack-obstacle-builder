@@ -8,6 +8,8 @@ name, and each one is:
     placed     — within the position and angle tolerances of its saved pose
     misplaced  — tracked, but further than a tolerance from it
     missing    — not streamed, or not tracked, right now
+    extra      — tracked live, but not in the session (e.g. an obstacle
+                 added since): it should not be there
 
 Distances are measured at the centre of the obstacle's hull, not at the
 rigid body's pivot, so "move 12 cm" is about the object itself. The saved
@@ -26,6 +28,7 @@ from enum import Enum
 import numpy as np
 from scipy.spatial.transform import Rotation
 
+from .geometry.hull import BOUNDARY_BODY_NAME
 from .natnet.types import RigidBody
 from .scene.scene_writer import LoadedSession
 
@@ -37,6 +40,7 @@ class State(str, Enum):
     PLACED    = "placed"
     MISPLACED = "misplaced"
     MISSING   = "missing"
+    EXTRA     = "not in session"
 
 
 @dataclass(frozen=True)
@@ -88,8 +92,9 @@ def check_placement(
 ) -> dict[str, Placement]:
     """
     Compare live rigid bodies (world frame, Z-up) with the targets.
-    Returns a Placement for every target, in the targets' order. Live bodies
-    that are not targets are ignored.
+    Returns a Placement for every target, in the targets' order, then one
+    (EXTRA) for every tracked live body that is not a target. The boundary
+    rigid body is never an obstacle and is left out.
     """
     live = {b.name: b for b in bodies}
     out = {}
@@ -104,14 +109,26 @@ def check_placement(
         angle = float(np.degrees(turn.magnitude()))
         ok = np.linalg.norm(move) <= position_tol and angle <= angle_tol
         out[name] = Placement(name, State.PLACED if ok else State.MISPLACED, move, angle)
+    for b in bodies:
+        if (b.name not in targets and b.tracking_valid
+                and b.name.lower() != BOUNDARY_BODY_NAME):
+            out[b.name] = Placement(b.name, State.EXTRA)
     return out
 
 
+def is_complete(placements: dict[str, Placement]) -> bool:
+    """True when every target is in place and nothing extra is in the scene."""
+    return all(p.state is State.PLACED for p in placements.values())
+
+
 def summary(placements: dict[str, Placement]) -> str:
-    """e.g. "2 / 3 in place" (or "All 3 in place")."""
-    n = len(placements)
-    k = sum(p.state is State.PLACED for p in placements.values())
-    return f"All {n} in place" if n and k == n else f"{k} / {n} in place"
+    """e.g. "2 / 3 in place" (or "All 3 in place"), then e.g. "· 1 extra"."""
+    states = [p.state for p in placements.values()]
+    extra = states.count(State.EXTRA)
+    n = len(states) - extra
+    k = states.count(State.PLACED)
+    text = f"All {n} in place" if n and k == n else f"{k} / {n} in place"
+    return f"{text} · {extra} extra" if extra else text
 
 
 def describe_move(move: np.ndarray) -> str:

@@ -30,6 +30,7 @@ STATUS_COLOURS = {
     State.PLACED:    (0.18, 0.80, 0.34),   # green
     State.MISPLACED: (0.90, 0.22, 0.20),   # red
     State.MISSING:   (0.55, 0.55, 0.55),   # grey
+    State.EXTRA:     (0.95, 0.61, 0.07),   # amber
 }
 
 
@@ -83,12 +84,16 @@ class PlacementTable(QTableWidget):
             dot.setToolTip(p.state.value)
             dot.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             move, turn = self.item(row, 2), self.item(row, 3)
-            self.item(row, 1).setToolTip(name)
-            if p.state is State.MISSING:
+            self.item(row, 1).setToolTip(name if p.state is not State.EXTRA
+                                         else f"{name} (not in session)")
+            if p.state in (State.MISSING, State.EXTRA):
                 move.setText("—")
                 turn.setText("—")
+                tip = ("Not tracked: not streamed by Motive, or not visible now"
+                       if p.state is State.MISSING
+                       else "Not in the session: remove it to match the setup")
                 for item in (move, turn):
-                    item.setToolTip("Not tracked: not streamed by Motive, or not visible now")
+                    item.setToolTip(tip)
             else:
                 move.setText(f"{p.distance * 100:.1f}")
                 move.setToolTip(f"Move it: {describe_move(p.move)}")

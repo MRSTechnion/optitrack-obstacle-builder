@@ -111,12 +111,14 @@ and choose **File → Reconstruct setup…** (Ctrl+R), then the session's
   **red** when not, with a white line to where it belongs
 
 An obstacle that Motive does not track right now is shown only as a grey
-dashed outline.
+dashed outline. A tracked rigid body that is not in the session (e.g. an
+obstacle added since) is shown in **amber** and listed as *not in session*:
+remove it to match the setup.
 
 The sidebar lists each obstacle with how far to move it (cm) and turn it
 (°). Hover over the distance for the direction, e.g. `+x 12 cm, -y 3 cm`.
 **Within** sets when an obstacle counts as in place (default 2 cm and 2°),
-and the summary shows e.g. `2 / 3 in place`. **Stop** returns to the live
+and the summary shows e.g. `2 / 3 in place` (or `All 3 in place · 1 extra`). **Stop** returns to the live
 view.
 
 Distances are measured at the obstacle's centre. Obstacles are matched by
