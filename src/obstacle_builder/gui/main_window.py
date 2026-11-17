@@ -34,7 +34,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QAction, QCloseEvent
+from PyQt6.QtGui import QAction, QCloseEvent, QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -72,11 +72,14 @@ from ..reconstruct import (
     targets_from_session,
 )
 from ..scene.scene_writer import build_session, export_session, load_session
+from .doc_viewer import GUIDES, DocViewer, open_guide
 from .obstacle_table import ObstacleTable
 from .placement_table import STATUS_COLOURS, PlacementTable
 from .viewport import Viewport3D
 
 logger = logging.getLogger(__name__)
+
+RESOURCES = Path(__file__).parent / "resources"   # logo and icon
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +142,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("OptiTrack Obstacle Builder")
+        self.setWindowIcon(QIcon(str(RESOURCES / "mrs_icon.png")))
         self.resize(1280, 800)
 
         # --- State ----------------------------------------------------------
@@ -491,6 +495,12 @@ class MainWindow(QMainWindow):
         dev_menu.addAction(self._act_mock)
 
         help_menu = menubar.addMenu("Help")
+        self._doc_viewer = None
+        for label, relative in GUIDES:
+            act = QAction(label, self)
+            act.triggered.connect(lambda _c=False, r=relative: self._open_guide(r))
+            help_menu.addAction(act)
+        help_menu.addSeparator()
         act_about = QAction("About", self)
         act_about.triggered.connect(self._on_about)
         help_menu.addAction(act_about)
@@ -1043,15 +1053,27 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     @pyqtSlot()
+    def _open_guide(self, relative: str):
+        if self._doc_viewer is None:
+            self._doc_viewer = DocViewer(self)
+        open_guide(self._doc_viewer, relative)
+
     def _on_about(self):
-        QMessageBox.about(
-            self,
-            "OptiTrack Obstacle Builder",
+        self._about_box().exec()
+
+    def _about_box(self) -> QMessageBox:
+        box = QMessageBox(self)
+        box.setWindowTitle("About OptiTrack Obstacle Builder")
+        box.setIconPixmap(QPixmap(str(RESOURCES / "mrs_logo.png")).scaledToWidth(
+            280, Qt.TransformationMode.SmoothTransformation))
+        box.setText("<b>OptiTrack Obstacle Builder</b><br>MRS — Multi-Robot Systems Lab")
+        box.setInformativeText(
             "Generates 3D obstacle models from OptiTrack rigid bodies.\n\n"
             "Outputs: STL files + scene.json\n"
             "Coordinate convention: Z-up (default)\n\n"
-            "See docs/ for the marker placement guide and scene.json spec.",
+            "The guides are in the Help menu."
         )
+        return box
 
     # ------------------------------------------------------------------
     # Window lifecycle

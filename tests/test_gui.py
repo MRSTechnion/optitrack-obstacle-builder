@@ -270,3 +270,25 @@ def test_pan_moves_the_scene_with_the_mouse(azimuth):
     down  = on_screen(_pan_step(0, 10, azimuth, 0.01)) - start
     assert right[0] > 0 and right[1] == pytest.approx(0, abs=1e-9)
     assert down[1] < 0 and down[0] == pytest.approx(0, abs=1e-9)
+
+
+def test_lab_logo_and_icon(win):
+    from obstacle_builder.gui.main_window import RESOURCES
+    assert not win.windowIcon().isNull()
+    box = win._about_box()
+    assert not box.iconPixmap().isNull()
+    assert "Multi-Robot Systems Lab" in box.text()
+    assert {p.name for p in RESOURCES.glob("*.png")} == {"mrs_icon.png", "mrs_logo.png"}
+
+
+def test_help_menu_opens_the_guides(win):
+    from obstacle_builder.gui.doc_viewer import GUIDES, REPO_ROOT
+    for label, relative in GUIDES:
+        assert (REPO_ROOT / relative).is_file(), relative
+        win._open_guide(relative)
+        text = win._doc_viewer._browser.toPlainText()
+        first_heading = next(line for line in (REPO_ROOT / relative).read_text().splitlines()
+                             if line.startswith("# "))
+        assert first_heading[2:] in text, label
+        assert win._doc_viewer.windowTitle()
+    win._doc_viewer.close()
