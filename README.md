@@ -67,6 +67,11 @@ Before connecting, check these in Motive:
   Motive can see its markers.
 - **Streaming:** Settings → Streaming → enable NatNet, transmission type
   **Multicast**.
+- **Network:** the tool connects to Motive at **192.168.77.1**, its address
+  on the lab's MRS network. Connect this computer to that network, or type
+  another address in the toolbar's *OptiTrack IP* field (`--server-ip` for
+  the ROS 2 node). The default is `DEFAULT_SERVER_IP` in
+  `src/obstacle_builder/natnet/client.py`.
 - **Up Axis:** leave Settings → Streaming → Up Axis at **Z Axis** (the lab's
   configuration). The tool expects Z-up from Motive; if this setting is ever
   changed, obstacles appear rotated 90° relative to the floor (see

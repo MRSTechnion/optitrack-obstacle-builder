@@ -60,7 +60,7 @@ from ..adapters import gazebo
 from ..adapters import octomap as octomap_adapter
 from ..geometry.hull import BOUNDARY_BODY_NAME, build_all_hulls, build_boundary, build_hull
 from ..geometry.transform import convert_frame
-from ..natnet.client import MockNatNetConnection, NatNetConnection
+from ..natnet.client import DEFAULT_SERVER_IP, MockNatNetConnection, NatNetConnection
 from ..natnet.types import Frame
 from ..reconstruct import (
     ANGLE_TOL_DEG,
@@ -226,9 +226,9 @@ class MainWindow(QMainWindow):
 
         # Server IP input
         ip_label = QLabel("OptiTrack IP:")
-        self._ip_input = QLineEdit("192.168.1.100")
+        self._ip_input = QLineEdit(DEFAULT_SERVER_IP)
         self._ip_input.setFixedWidth(130)
-        self._ip_input.setPlaceholderText("e.g. 192.168.1.100")
+        self._ip_input.setPlaceholderText(f"e.g. {DEFAULT_SERVER_IP}")
 
         self._btn_connect    = QPushButton("Connect")
         self._btn_disconnect = QPushButton("Disconnect")

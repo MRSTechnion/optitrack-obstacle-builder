@@ -184,7 +184,7 @@ def test_local_ip_for_picks_routing_interface():
 
 
 def test_default_client_ip_is_auto():
-    conn = client_mod.NatNetConnection(server_ip="192.168.1.10")
+    conn = client_mod.NatNetConnection(server_ip="192.168.77.1")
     assert conn.client_ip is None  # resolved to a real NIC on connect()
 
 
@@ -213,7 +213,7 @@ def test_multicast_data_socket_binds_to_all_interfaces():
 # ---------------------------------------------------------------------------
 
 def _zup_conn(axis: str):
-    conn = client_mod.NatNetConnection(server_ip="192.168.1.10", stream_up_axis=axis)
+    conn = client_mod.NatNetConnection(server_ip="192.168.77.1", stream_up_axis=axis)
     conn._id_to_name = {7: "Box_01"}
     # Z-up stream: box lying on the floor at height 0.16 m, yawed (unit quaternion)
     conn._rb_poses = {7: ((-0.367, 0.527, 0.16), (0.0, 0.0, 0.6, 0.8), 0.001, True)}

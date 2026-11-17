@@ -3,7 +3,7 @@ NatNet 4.1 client wrapper.
 
 Wraps the OptiTrack NatNetClient SDK into a clean three-method interface:
 
-    client = NatNetConnection(server_ip="192.168.1.100")
+    client = NatNetConnection(server_ip="192.168.77.1")
     client.connect()
     frame = client.capture_frame()
     client.disconnect()
@@ -97,9 +97,10 @@ if _SDK_AVAILABLE:
     sys.modules[_NatNetSDK.__module__].print = _SDKPrintToLogging()
 
 # ---------------------------------------------------------------------------
-# Network defaults — adjust server_ip to match your OptiTrack PC
+# Network defaults. DEFAULT_SERVER_IP is the Motive PC on the lab's MRS
+# network; the GUI's IP field and the ROS 2 node's --server-ip start from it.
 # ---------------------------------------------------------------------------
-DEFAULT_SERVER_IP     = "192.168.1.100"
+DEFAULT_SERVER_IP     = "192.168.77.1"
 # None = auto-detect the local interface that routes to the server (see
 # _local_ip_for). Must be a real NIC address for multicast: joining the
 # group on 127.0.0.1 means no frames are ever received.
