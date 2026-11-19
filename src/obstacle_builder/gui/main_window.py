@@ -30,6 +30,7 @@ Child widgets (Viewport, ObstacleTable) communicate back via signals.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -1091,7 +1092,21 @@ class MainWindow(QMainWindow):
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _avoid_gtk3_wayland_crash(environ=os.environ):
+    """
+    On GNOME 50 (e.g. Ubuntu 26.04), GTK 3 aborts when it opens a Wayland
+    display: it reads a settings key GNOME removed ("antialiasing"). Qt loads
+    GTK 3 for the desktop's look, so the app would crash on start. GTK in
+    this process uses X11 (XWayland) instead; Qt itself stays on Wayland.
+    Only when both are available and the user has not chosen a GTK backend.
+    """
+    if (sys.platform.startswith("linux") and "GDK_BACKEND" not in environ
+            and environ.get("WAYLAND_DISPLAY") and environ.get("DISPLAY")):
+        environ["GDK_BACKEND"] = "x11"
+
+
 def main():
+    _avoid_gtk3_wayland_crash()
     logging.basicConfig(
         level   = logging.INFO,
         format  = "%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",

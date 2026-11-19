@@ -292,3 +292,16 @@ def test_help_menu_opens_the_guides(win):
         assert first_heading[2:] in text, label
         assert win._doc_viewer.windowTitle()
     win._doc_viewer.close()
+
+
+@pytest.mark.parametrize(("env", "expected"), [
+    ({"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0"}, "x11"),
+    ({"WAYLAND_DISPLAY": "wayland-0", "DISPLAY": ":0", "GDK_BACKEND": "wayland"}, "wayland"),
+    ({"WAYLAND_DISPLAY": "wayland-0"}, None),           # no XWayland: leave GTK alone
+    ({"DISPLAY": ":0"}, None),                          # X11 session: nothing to do
+])
+def test_gtk3_wayland_workaround(monkeypatch, env, expected):
+    from obstacle_builder.gui import main_window
+    monkeypatch.setattr(main_window.sys, "platform", "linux")
+    main_window._avoid_gtk3_wayland_crash(env)
+    assert env.get("GDK_BACKEND") == expected
