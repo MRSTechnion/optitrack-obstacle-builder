@@ -348,6 +348,8 @@ straight-line moves, room bounds. Works with OMPL or any other planner —
 see `docs/collision.md` for the full guide, the safety-margin advice, a C++
 (FCL) recipe, and `examples/ompl_planning.py`, a tested OMPL template for a
 drone and a ground robot (`pip install -e ".[ompl]"`, Linux / macOS).
+OMPL has no Python 3.14 wheels yet: on 3.14, run the example from a
+Python 3.13 environment (see `docs/collision.md`).
 
 ## Coordinate convention
 

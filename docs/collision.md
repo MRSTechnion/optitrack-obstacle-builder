@@ -90,9 +90,19 @@ tested template for two robots:
 Both keep a 5 cm margin by default (`--margin`).
 
 ```bash
-pip install -e ".[ompl]"      # Linux / macOS (OMPL has no Windows wheels)
+pip install -e ".[ompl]"      # Linux / macOS, Python 3.10–3.13 (see below)
 python examples/ompl_planning.py SESSION --robot drone  --start -3 -3 1 --goal 3 3 1.5 --radius 0.25
 python examples/ompl_planning.py SESSION --robot ground --start -3 -3 0 --goal 3 3 1.57 --size 0.7 0.31 0.4
+```
+
+OMPL publishes wheels for Python 3.10–3.13 only (none yet for 3.14), so on
+3.14 `pip` reports *No matching distribution found for ompl*. Use a
+separate Python 3.13 environment for the example, e.g. with `uv`:
+
+```bash
+uv venv --python 3.13 .venv-ompl
+uv pip install --python .venv-ompl -e ".[ompl]"
+.venv-ompl/bin/python examples/ompl_planning.py SESSION --robot drone ...
 ```
 
 ## C++ recipe (FCL directly)

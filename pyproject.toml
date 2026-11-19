@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]   # 77: SPDX license string
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "obstacle-builder"
 version = "0.1.0"
-description = "Generate 3D obstacle models from OptiTrack rogid bodies"
+description = "Generate 3D obstacle models from OptiTrack rigid bodies"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
 dependencies = [
     "PyQt6>6.6",
     "PyOpenGL>=3.1",
